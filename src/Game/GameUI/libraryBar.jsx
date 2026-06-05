@@ -25,6 +25,8 @@ import {
   uploadScenarioAsset,
   useLibraryState,
 } from "../../runtime/library.js";
+import CountryPicker from "./CountryPicker.jsx";
+import PresetManager from "./PresetManager.jsx";
 
 const BAR_HEIGHT = 64;
 const TOP_BAR_OFFSET = "4.75rem";
@@ -116,6 +118,7 @@ const editorSectionLabels = {
   assets: "Assets",
   bundles: "Bundles",
   overview: "Overview",
+  presets: "Presets",
   prompts: "Prompts",
   world: "World",
 };
@@ -624,6 +627,7 @@ const EditorDrawer = ({
   onDelete,
   onExportBundle,
   onFileSelect,
+  onFormChange,
   onOpenFileDialog,
   onSave,
   promptSectionKey,
@@ -637,8 +641,8 @@ const EditorDrawer = ({
   const record = kind === "scenario" ? details.scenario : details.game;
   const visibleSections =
     kind === "scenario"
-      ? ["overview", "world", "prompts", "assets", "bundles"]
-      : ["overview", "world", "prompts", "assets"];
+      ? ["overview", "world", "presets", "prompts", "assets", "bundles"]
+      : ["overview", "world", "presets", "prompts", "assets"];
 
   return (
     <div
@@ -728,7 +732,7 @@ const EditorDrawer = ({
           <div style={{ display: "grid", gap: "0.8rem", gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
             <div>
               <label style={fieldLabelStyle}>Player Country</label>
-              <input style={inputStyle} value={formState.country} onChange={(event) => onChange("country", event.target.value)} />
+              <CountryPicker value={formState.country} onChange={(value) => onChange("country", value)} />
             </div>
             <div>
               <label style={fieldLabelStyle}>Game Date</label>
@@ -866,6 +870,14 @@ const EditorDrawer = ({
         </div>
       )}
 
+      {editorSection === "presets" && (
+        <PresetManager
+          formState={formState}
+          onFormChange={onFormChange}
+        />
+      )}
+
+
       {editorError && (
         <div style={{ background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.34)", borderRadius: "14px", color: "#fecaca", marginBottom: "0.9rem", padding: "0.8rem 0.9rem" }}>
           {editorError}
@@ -894,7 +906,7 @@ const EditorDrawer = ({
   );
 };
 
-const LibraryTopBar = () => {
+const LibraryTopBar = ({ setCurrentScreen }) => {
   const {
     activeGame,
     activeGameId,
@@ -1342,7 +1354,38 @@ const LibraryTopBar = () => {
           ))}
         </div>
 
-        <div />
+        <div style={{ alignItems: "center", display: "flex", gap: "0.55rem", justifyContent: "flex-end", justifySelf: "end", minWidth: 0 }}>
+          <button
+            onClick={() => {
+              if (activeGameId) openGameEditor(activeGameId);
+              else setEditorError("Önce bir oyuna başlamalısınız.");
+            }}
+            style={{
+              ...actionButtonStyle,
+              background: "rgba(234,179,8,0.2)",
+              borderColor: "rgba(234,179,8,0.4)",
+              color: "rgba(254,240,138,0.9)",
+            }}
+            type="button"
+          >
+            👑 Hileler
+          </button>
+          
+          {setCurrentScreen && (
+            <button
+              onClick={() => setCurrentScreen("home")}
+              style={{
+                ...actionButtonStyle,
+                background: "rgba(59,130,246,0.2)",
+                borderColor: "rgba(59,130,246,0.4)",
+                color: "rgba(219,234,254,0.9)",
+              }}
+              type="button"
+            >
+              🏠 Ana Menü
+            </button>
+          )}
+        </div>
       </div>
 
       <input
@@ -1421,6 +1464,7 @@ const LibraryTopBar = () => {
         onDelete={handleDelete}
         onExportBundle={handleExportBundle}
         onFileSelect={handleEditorAssetSelect}
+        onFormChange={(merged) => setEditorState(merged)}
         onOpenFileDialog={(assetKey) => assetFileInputsRef.current[assetKey]?.click()}
         onSave={handleSave}
         promptSectionKey={promptSectionKey}

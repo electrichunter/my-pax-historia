@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Map from "./Game/Map/World.jsx";
 import UI from "./Game/GameUI/main.jsx";
+import Home from "./Game/GameUI/Home.jsx";
 import StartupScreen from "./runtime/StartupScreen.jsx";
 import {
   STARTUP_TIME_BUDGET_MS,
@@ -44,6 +45,7 @@ function App() {
     const saved = localStorage.getItem("Terrain");
     return saved !== null ? JSON.parse(saved) : true;
   });
+  const [currentScreen, setCurrentScreen] = useState("home");
   const { token: libraryToken } = useLibraryState();
 
   useEffect(() => {
@@ -164,7 +166,7 @@ function App() {
     />
     <div style={Vignette} />
     </div>
-    {isReady && (
+    {isReady && currentScreen === "game" && (
       <UI
       key={`ui-${libraryToken || "default"}`}
       isGlobeEnabled={isGlobeEnabled}
@@ -172,7 +174,11 @@ function App() {
       mapRef={mapRef}
       setIsGlobeEnabled={setIsGlobeEnabled}
       setIsTerrainEnabled={setIsTerrainEnabled}
+      setCurrentScreen={setCurrentScreen}
       />
+    )}
+    {isReady && currentScreen === "home" && (
+      <Home setCurrentScreen={setCurrentScreen} />
     )}
     {!isReady && <StartupScreen {...startupOverlayState} />}
     </>

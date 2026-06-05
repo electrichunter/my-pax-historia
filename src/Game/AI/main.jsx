@@ -605,7 +605,10 @@ function buildPromptVariables({
         difficulty: gameData.difficulty ?? "standard",
         difficultyGuidanceChats: "Diplomatic flexibility should reflect the configured difficulty.",
         gameMasterRequest: "",
-        language: worldData.language ?? gameData.language ?? "English",
+        language: (() => {
+            const lang = gameData.language ?? worldData.language ?? "English";
+            return `${lang} (CRITICAL: All generated text, dialogue, events, titles, and descriptions MUST be exclusively in ${lang})`;
+        })(),
         lastSpeaker: currentChat?.messages?.at(-1)?.speaker ?? "",
         plannedActions: actionText || "No planned actions are currently queued.",
         playerPolity: gameData.country ?? "",

@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import { Chart, registerables } from "chart.js";
 import { sendMessage, startChat, loadHistory } from "../AI/main.jsx";
 import { JSON_URLS, readJson, writeJson } from "../../runtime/assets.js";
+import { useLocale } from "../../runtime/locales.js";
 
 Chart.register(...registerables);
 
@@ -137,15 +138,18 @@ const AdvisorChart = ({ config }) => {
     );
 };
 
-const AdvisorButton = ({ isAdvisorOpen, rightShift, onToggle }) => (
-    <button onClick={onToggle} style={{
-        ...baseStyle,
-        bottom: "0.5rem", right: rightShift,
-        height: "4rem", width: "4rem",
-        cursor: "pointer", fontSize: "1.5rem",
-        transition: "right 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
-    }}>🧭</button>
-);
+const AdvisorButton = ({ isAdvisorOpen, rightShift, onToggle }) => {
+    const loc = useLocale();
+    return (
+        <button title={loc.advisorTitle} onClick={onToggle} style={{
+            ...baseStyle,
+            bottom: "0.5rem", right: rightShift,
+            height: "4rem", width: "4rem",
+            cursor: "pointer", fontSize: "1.5rem",
+            transition: "right 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
+        }}>🧭</button>
+    );
+};
 
 const saveMessages = async (messages) => {
     try {
@@ -160,6 +164,7 @@ const loadMessages = async () => {
 };
 
 const AdvisorPanel = ({ isAdvisorOpen }) => {
+    const loc = useLocale();
     const [messages, setMessages]   = useState([]);
     const [input, setInput]         = useState("");
     const [isLoading, setIsLoading] = useState(false);
@@ -253,10 +258,10 @@ const AdvisorPanel = ({ isAdvisorOpen }) => {
         {/* Header */}
         <div style={{ padding: "1.5rem 1.25rem 1rem", borderBottom: "1px solid rgba(255,255,255,0.1)", display: "flex", alignItems: "center", gap: "0.75rem" }}>
         <span style={{ fontSize: "1.5rem" }}>🧭</span>
-        <h2 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 600, flex: 1 }}>Advisor</h2>
+        <h2 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 600, flex: 1 }}>{loc.advisorTitle}</h2>
         <button
         onClick={async () => { setMessages([]); startChat(); await saveMessages([]); }}
-        title="Clear chat"
+        title={loc.clearChat}
         style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: "1.5rem", lineHeight: 1, padding: 0, display: "flex", alignItems: "center" }}
         >🗑</button>
         </div>
@@ -317,7 +322,7 @@ const AdvisorPanel = ({ isAdvisorOpen }) => {
         {/* Input */}
         <div style={{ padding: "1rem", borderTop: "1px solid rgba(255,255,255,0.1)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
         <textarea
-        placeholder="Ask your advisor..."
+        placeholder={loc.askAdvisor}
         rows={1} value={input}
         onChange={e => setInput(e.target.value)}
         onKeyDown={handleKeyDown}

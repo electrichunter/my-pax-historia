@@ -9,6 +9,7 @@ import {
     readActionsState,
     writeActionsState,
 } from "../../runtime/gameState.js";
+import { getLocaleStrings, useLocale } from "../../runtime/locales.js";
 
 dayjs.extend(advancedFormat);
 
@@ -159,16 +160,16 @@ const ActionItem = ({ action, onDelete }) => {
     );
 };
 
-const SuggestionCard = ({ topic, onQueue }) => (
+const SuggestionCard = ({ topic, onQueue, queuedActionIds }) => (
     <div
     style={{
         background: "rgba(255,255,255,0.04)",
-                                                border: "1px solid rgba(255,255,255,0.08)",
-                                                borderRadius: "12px",
-                                                display: "flex",
-                                                flexDirection: "column",
-                                                gap: "0.55rem",
-                                                padding: "0.7rem 0.8rem",
+        border: "1px solid rgba(255,255,255,0.08)",
+        borderRadius: "12px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.55rem",
+        padding: "0.7rem 0.8rem",
     }}
     >
     <div>
@@ -178,28 +179,36 @@ const SuggestionCard = ({ topic, onQueue }) => (
     </div>
     </div>
     <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-    {topic.actions.map((action) => (
+    {topic.actions.map((action) => {
+        const isQueued = queuedActionIds?.has(action.id);
+        return (
         <button
         key={action.id}
         type="button"
         onClick={() => onQueue(action)}
         style={{
-            background: "rgba(109,40,217,0.12)",
-                                    border: "1px solid rgba(139,92,246,0.24)",
-                                    borderRadius: "10px",
-                                    color: "rgba(255,255,255,0.9)",
-                                    cursor: "pointer",
-                                    fontFamily: "sans-serif",
-                                    padding: "0.55rem 0.7rem",
-                                    textAlign: "left",
+            background: isQueued ? "rgba(16,185,129,0.15)" : "rgba(109,40,217,0.12)",
+            border: isQueued ? "1px solid rgba(16,185,129,0.4)" : "1px solid rgba(139,92,246,0.24)",
+            borderRadius: "10px",
+            color: "rgba(255,255,255,0.9)",
+            cursor: isQueued ? "default" : "pointer",
+            fontFamily: "sans-serif",
+            padding: "0.55rem 0.7rem",
+            textAlign: "left",
+            opacity: isQueued ? 0.85 : 1,
+            pointerEvents: isQueued ? "none" : "auto",
         }}
         >
-        <div style={{ fontSize: "0.76rem", fontWeight: 700 }}>{action.title}</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ fontSize: "0.76rem", fontWeight: 700, color: isQueued ? "#34d399" : "inherit" }}>{action.title}</div>
+            {isQueued && <div style={{ fontSize: "0.8rem", color: "#34d399", fontWeight: "bold" }}>{"\u2713"}</div>}
+        </div>
         <div style={{ color: "rgba(255,255,255,0.62)", fontSize: "0.74rem", lineHeight: "1.45", marginTop: "0.18rem" }}>
         {action.text}
         </div>
         </button>
-    ))}
+        );
+    })}
     </div>
     </div>
 );
@@ -210,11 +219,14 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
     const [country, setCountry] = React.useState("your nation");
     const [gameDate, setGameDate] = React.useState("the current date");
     const [suggestions, setSuggestions] = React.useState([]);
+    const [queuedActionIds, setQueuedActionIds] = React.useState(new Set());
     const [hasRequestedSuggestions, setHasRequestedSuggestions] = React.useState(false);
     const [isSubmitting, setIsSubmitting] = React.useState(false);
     const [isImproving, setIsImproving] = React.useState(false);
     const [isSuggesting, setIsSuggesting] = React.useState(false);
+    const [language, setLanguage] = React.useState("English");
     const inputRef = React.useRef(null);
+    const loc = getLocaleStrings(language);
 
     React.useEffect(() => {
         if (!isOpen) {
@@ -223,6 +235,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
 
         let cancelled = false;
         setSuggestions([]);
+        setQueuedActionIds(new Set());
         setHasRequestedSuggestions(false);
 
         loadActions().then((saved) => {
@@ -242,8 +255,14 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
                     setCountry(data.country);
                 }
 
+                if (data.language) {
+                    setLanguage(data.language);
+                }
+                
+                const currentLoc = getLocaleStrings(data.language);
+
                 if (data.gameDate) {
-                    setGameDate(dayjs(data.gameDate).format("MMMM Do, YYYY"));
+                    setGameDate(dayjs(data.gameDate).locale(currentLoc.code).format(currentLoc.dateFormat));
                 }
             })
             .catch(() => {});
@@ -327,6 +346,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
             return;
         }
 
+        setQueuedActionIds((prev) => new Set(prev).add(action.id));
         await persistActions([...actions, queuedAction]);
     };
 
@@ -336,6 +356,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
         }
 
         setHasRequestedSuggestions(true);
+        setQueuedActionIds(new Set());
         setIsSuggesting(true);
         try {
             const topics = await generateActionSuggestions({ force: true });
@@ -355,9 +376,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
         }
     };
 
-    const suggestionButtonLabel = hasRequestedSuggestions
-    ? (isSuggesting ? "Refreshing AI suggestions..." : "Refresh AI suggestions")
-    : (isSuggesting ? "Loading AI suggestions..." : "Get AI suggestions");
+    const suggestButtonText = isSuggesting ? loc.loadingSuggestions : loc.getAISuggestions;
 
     return (
         <div
@@ -372,8 +391,9 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
             display: "flex",
             flexDirection: "column",
             fontFamily: "sans-serif",
-            height: "calc(100vh - 33rem)",
-            minHeight: "10rem",
+            height: "calc(100vh - 13rem)",
+            maxHeight: "800px",
+            minHeight: "25rem",
             left: "0rem",
             maxWidth: "calc(100vw - 1rem)",
             opacity: isOpen ? 1 : 0,
@@ -394,7 +414,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
             padding: "1rem 1.25rem 0.75rem",
         }}
         >
-        <span style={{ fontSize: "1rem", fontWeight: 700, letterSpacing: "0.01em" }}>Actions</span>
+        <span style={{ fontSize: "1rem", fontWeight: 700, letterSpacing: "0.01em" }}>{loc.actionsTitle}</span>
         <button
         type="button"
         onClick={onClose}
@@ -431,7 +451,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
             margin: 0,
         }}
         >
-        Submit actions for {country} for {gameDate}. Your actions will affect how the game world responds.
+        {loc.submitDesc(country, gameDate)}
         </p>
 
         <button
@@ -459,7 +479,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
             event.currentTarget.style.borderColor = "rgba(139,92,246,0.4)";
         }}
         >
-        Help brainstorm actions
+        {loc.helpBrainstorm}
         </button>
 
         <button
@@ -490,7 +510,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
         }}
         >
         {isSuggesting && <SpinnerRing size={14} />}
-        <span>{suggestionButtonLabel}</span>
+        <span>{suggestButtonText}</span>
         </button>
 
         {(hasRequestedSuggestions || isSuggesting || suggestions.length > 0) && (
@@ -499,55 +519,47 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
                 display: "flex",
                 flexDirection: "column",
                 gap: "0.5rem",
-                maxHeight: "13rem",
+                maxHeight: "25rem",
                 overflowY: "auto",
                 scrollbarWidth: "none",
             }}
             >
             {hasRequestedSuggestions && !isSuggesting && suggestions.length === 0 && (
                 <p style={{ color: "rgba(255,255,255,0.35)", fontSize: "0.78rem", fontStyle: "italic", margin: 0 }}>
-                No AI suggestions generated yet.
+                {loc.noActions}
                 </p>
             )}
             {suggestions.map((topic) => (
-                <SuggestionCard key={topic.id} topic={topic} onQueue={handleQueueSuggestion} />
+                <SuggestionCard key={topic.id} topic={topic} onQueue={handleQueueSuggestion} queuedActionIds={queuedActionIds} />
             ))}
             </div>
         )}
 
         <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
-        <p
-        style={{
-            color: "rgba(255,255,255,0.9)",
-            fontSize: "0.78rem",
-            fontWeight: 700,
-            letterSpacing: "0.06em",
-            margin: "0 0 0.5rem 0",
-            textTransform: "uppercase",
-        }}
-        >
-        Your Submitted Actions
-        </p>
-
-        <div
-        style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "0.4rem",
-            flex: 1,
-            overflowY: "auto",
-            scrollbarWidth: "none",
-        }}
-        >
-        {submittedActions.length === 0 && (
-            <p style={{ color: "rgba(255,255,255,0.35)", fontSize: "0.8rem", fontStyle: "italic", margin: 0 }}>
-            No actions submitted yet.
-            </p>
-        )}
-        {submittedActions.map(({ normalized, originalIndex }) => (
-            <ActionItem key={normalized.id || originalIndex} action={normalized} onDelete={() => handleDelete(originalIndex)} />
-        ))}
+        <div style={{ color: "rgba(255,255,255,0.4)", fontSize: "0.7rem", fontWeight: 700, letterSpacing: "0.05em", padding: "1rem 1.25rem 0.5rem" }}>
+        {loc.yourSubmitted}
         </div>
+        
+        {submittedActions.length === 0 ? (
+            <div style={{ color: "rgba(255,255,255,0.3)", fontStyle: "italic", fontSize: "0.85rem", padding: "0.5rem 1.25rem" }}>
+            {loc.noActions}
+            </div>
+        ) : (
+            <div
+            style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "0.4rem",
+                flex: 1,
+                overflowY: "auto",
+                scrollbarWidth: "none",
+            }}
+            >
+            {submittedActions.map(({ normalized, originalIndex }) => (
+                <ActionItem key={normalized.id || originalIndex} action={normalized} onDelete={() => handleDelete(originalIndex)} />
+            ))}
+            </div>
+        )}
         </div>
         </div>
 
@@ -565,7 +577,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
         <input
         ref={inputRef}
         type="text"
-        placeholder="Enter your action..."
+        placeholder={loc.enterAction}
         value={inputValue}
         onChange={(event) => setInputValue(event.target.value)}
         onKeyDown={handleKeyDown}
@@ -652,6 +664,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
 
 const Actions = ({ onOpenAdvisor, hovered, setHovered, isOpen, onToggle }) => {
     const [hasOpened, setHasOpened] = React.useState(false);
+    const loc = useLocale();
 
     React.useEffect(() => {
         if (isOpen) {
@@ -670,7 +683,7 @@ const Actions = ({ onOpenAdvisor, hovered, setHovered, isOpen, onToggle }) => {
         )}
         <button
         type="button"
-        title="Actions"
+        title={loc.actionsTitle}
         style={{
             alignItems: "center",
             background: isOpen

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Layer, Source, useMap } from "react-map-gl/maplibre";
+import { Layer, Source, useMap, Marker } from "react-map-gl/maplibre";
 import { onRegionSelected } from "../Selection/Regions";
 import {
   JSON_URLS,
@@ -48,10 +48,35 @@ const WorldMap = () => {
   const { current: map } = useMap();
   const [colorMap, setColorMap] = useState({});
   const [worldState, setWorldState] = useState({ regionOwnershipOverrides: {} });
+  const [timelineOverrides, setTimelineOverrides] = useState(null);
   const [pointLabelData, setPointLabelData] = useState(EMPTY_FEATURE_COLLECTION);
   const [curvedLabelData, setCurvedLabelData] = useState(EMPTY_FEATURE_COLLECTION);
   const countriesUrl = PMTILES_PROTOCOL_URLS.countries;
   const regionsUrl = PMTILES_PROTOCOL_URLS.regions;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleUpdate = (event) => {
+      setTimelineOverrides(event.detail);
+    };
+
+    window.addEventListener("timeline-map-state-update", handleUpdate);
+    return () => {
+      window.removeEventListener("timeline-map-state-update", handleUpdate);
+    };
+  }, []);
+
+  const activeWorldState = useMemo(() => {
+    const baseState = worldState ?? { regionOwnershipOverrides: {}, polityOverrides: {} };
+    if (timelineOverrides) {
+      return {
+        ...baseState,
+        regionOwnershipOverrides: timelineOverrides.regionOwnershipOverrides ?? {},
+        polityOverrides: timelineOverrides.polityOverrides ?? {},
+      };
+    }
+    return baseState;
+  }, [worldState, timelineOverrides]);
 
   const handleRegionClick = useCallback((event) => {
     const features = map.queryRenderedFeatures(event.point, { layers: ["regions-fill"] });
@@ -112,14 +137,29 @@ const WorldMap = () => {
   }, []);
 
   const fillStyle = useMemo(() => {
-    const stops = Object.entries(colorMap).flatMap(([iso, rgb]) => [
+    const resolvedColorMap = { ...colorMap };
+    for (const [code, override] of Object.entries(activeWorldState?.polityOverrides ?? {})) {
+      if (override?.color) {
+        const hexMatch = /^#?([a-f0-9]{6})$/i.exec(override.color);
+        if (hexMatch) {
+          const hex = hexMatch[1];
+          resolvedColorMap[code.toUpperCase()] = [
+            Number.parseInt(hex.slice(0, 2), 16),
+            Number.parseInt(hex.slice(2, 4), 16),
+            Number.parseInt(hex.slice(4, 6), 16),
+          ];
+        }
+      }
+    }
+
+    const stops = Object.entries(resolvedColorMap).flatMap(([iso, rgb]) => [
       iso, `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`,
     ]);
     const fallback = buildFallbackColorExpression();
-    const regionOverrideStops = Object.entries(worldState?.regionOwnershipOverrides ?? {}).flatMap(([regionId, ownerCode]) => [
+    const regionOverrideStops = Object.entries(activeWorldState?.regionOwnershipOverrides ?? {}).flatMap(([regionId, ownerCode]) => [
       regionId,
-      colorMap[ownerCode]
-        ? `rgb(${colorMap[ownerCode][0]}, ${colorMap[ownerCode][1]}, ${colorMap[ownerCode][2]})`
+      resolvedColorMap[ownerCode]
+        ? `rgb(${resolvedColorMap[ownerCode][0]}, ${resolvedColorMap[ownerCode][1]}, ${resolvedColorMap[ownerCode][2]})`
         : fallbackColorFromCode(ownerCode),
     ]);
 
@@ -136,7 +176,7 @@ const WorldMap = () => {
         : fallback,
       "fill-opacity": 0.66,
     };
-  }, [colorMap, worldState]);
+  }, [colorMap, activeWorldState]);
 
   const pointLabelLayerLayout = useMemo(() => ({
     "text-field": ["get", "name"],
@@ -172,6 +212,68 @@ const WorldMap = () => {
       8, 0,
     ],
   }), []);
+
+  const [resolvedPins, setResolvedPins] = useState([]);
+
+  useEffect(() => {
+    const pins = activeWorldState?.mapPins ?? [];
+    if (pins.length === 0) {
+      setResolvedPins([]);
+      return;
+    }
+
+    let cancelled = false;
+    const resolveCoords = async () => {
+      try {
+        const [rBounds, cBounds] = await Promise.all([loadRegionBounds(), loadCountryBounds()]);
+        if (cancelled) return;
+
+        const nextPins = [];
+        for (const pin of pins) {
+          let coords = null;
+          if (pin.regionId) {
+            const bounds = rBounds.get(pin.regionId);
+            if (bounds) {
+              coords = [
+                (bounds[0][0] + bounds[1][0]) / 2,
+                (bounds[0][1] + bounds[1][1]) / 2,
+              ];
+            }
+          }
+
+          let fromCoords = null;
+          if (pin.fromRegionId) {
+            const bounds = rBounds.get(pin.fromRegionId);
+            if (bounds) {
+              fromCoords = [
+                (bounds[0][0] + bounds[1][0]) / 2,
+                (bounds[0][1] + bounds[1][1]) / 2,
+              ];
+            }
+          }
+
+          if (coords) {
+            nextPins.push({
+              ...pin,
+              lng: coords[0],
+              lat: coords[1],
+              fromLng: fromCoords ? fromCoords[0] : null,
+              fromLat: fromCoords ? fromCoords[1] : null,
+            });
+          }
+        }
+
+        setResolvedPins(nextPins);
+      } catch (error) {
+        console.error("Failed to resolve pin coords:", error);
+      }
+    };
+
+    resolveCoords();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorldState?.mapPins]);
 
   return (
     <>
@@ -236,7 +338,107 @@ const WorldMap = () => {
           paint={labelLayerPaint}
         />
       </Source>
+
+      {resolvedPins.map((pin) => (
+        <AnimatedMarker key={pin.id} pin={pin} />
+      ))}
     </>
+  );
+};
+
+const AnimatedMarker = ({ pin }) => {
+  const [pos, setPos] = useState({ lng: pin.fromLng || pin.lng, lat: pin.fromLat || pin.lat });
+
+  useEffect(() => {
+    if (pin.fromLng == null || pin.fromLat == null) {
+      setPos({ lng: pin.lng, lat: pin.lat });
+      return;
+    }
+
+    const startLng = pin.fromLng;
+    const startLat = pin.fromLat;
+    const endLng = pin.lng;
+    const endLat = pin.lat;
+    const duration = 2500;
+    const startTime = performance.now();
+
+    let animId;
+    const tick = (now) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, elapsed / duration);
+
+      const ease = progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+      const currentLng = startLng + (endLng - startLng) * ease;
+      const currentLat = startLat + (endLat - startLat) * ease;
+
+      setPos({ lng: currentLng, lat: currentLat });
+
+      if (progress < 1) {
+        animId = requestAnimationFrame(tick);
+      }
+    };
+
+    animId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animId);
+  }, [pin.lng, pin.lat, pin.fromLng, pin.fromLat]);
+
+  const emojiMap = {
+    industry: "🏭",
+    warehouse: "📦",
+    army: "🪖",
+  };
+  const emoji = emojiMap[pin.type] || "📍";
+
+  return (
+    <Marker longitude={pos.lng} latitude={pos.lat} anchor="center">
+      <div
+        style={{
+          alignItems: "center",
+          background: pin.type === "army" ? "rgba(220,38,38,0.95)" : "rgba(17,24,39,0.95)",
+          border: pin.type === "army" ? "2px solid #ef4444" : "1px solid rgba(255,255,255,0.25)",
+          borderRadius: "50%",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.2)",
+          cursor: "pointer",
+          display: "flex",
+          fontSize: pin.type === "army" ? "1.3rem" : "1.05rem",
+          height: pin.type === "army" ? "2.5rem" : "2.1rem",
+          justifyContent: "center",
+          position: "relative",
+          transition: "transform 0.15s ease",
+          width: pin.type === "army" ? "2.5rem" : "2.1rem",
+        }}
+        title={pin.name}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = "scale(1.2)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = "scale(1)";
+        }}
+      >
+        <span>{emoji}</span>
+        <div
+          style={{
+            background: "rgba(15,23,42,0.95)",
+            border: "1px solid rgba(255,255,255,0.15)",
+            borderRadius: "4px",
+            color: "white",
+            fontSize: "0.68rem",
+            fontWeight: "bold",
+            marginTop: "0.25rem",
+            padding: "0.15rem 0.35rem",
+            position: "absolute",
+            top: "100%",
+            whiteSpace: "nowrap",
+            zIndex: 10,
+          }}
+        >
+          {pin.name}
+        </div>
+      </div>
+    </Marker>
   );
 };
 

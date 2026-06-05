@@ -639,9 +639,15 @@ export const readGameStateBundle = async ({ force = false } = {}) => {
   };
 };
 
-export const applyEventImpactsToWorld = ({ colors = {}, events = [], world }) => {
+export const applyEventImpactsToWorld = ({ colors = {}, events = [], regionCatalog = [], countryCatalog = [], world }) => {
   const nextColors = cloneValue(colors) ?? {};
   const nextWorld = normalizeWorldState(world);
+
+  if (!nextWorld.mapPins) {
+    nextWorld.mapPins = [];
+  }
+
+  const isTr = nextWorld.language === "Türkçe" || events.some((e) => e.description && /[\u011e\u011f\u0130\u0131\u015e\u015f\u00c7\u00e7\u00d6\u00f6\u00dc\u00fc]/.test(e.description));
 
   for (const event of normalizeEvents(events)) {
     for (const transfer of event.impacts.regionTransfers) {
@@ -674,6 +680,86 @@ export const applyEventImpactsToWorld = ({ colors = {}, events = [], world }) =>
             Number.parseInt(hex.slice(4, 6), 16),
           ];
         }
+      }
+    }
+
+    // Dynamic Pin & Army Movement Extraction from Event Text
+    const text = `${event.title || ""} ${event.description || ""}`.toLowerCase();
+
+    // Find mentioned region
+    let targetRegion = null;
+    for (const region of regionCatalog) {
+      if (region.name && text.includes(region.name.toLowerCase())) {
+        targetRegion = region;
+        break;
+      }
+    }
+
+    if (!targetRegion && event.impacts.regionTransfers?.length > 0) {
+      const regionId = event.impacts.regionTransfers[0].regionId;
+      targetRegion = regionCatalog.find((r) => r.id === regionId);
+    }
+
+    const isIndustry = text.includes("sanayi") || text.includes("fabrika") || text.includes("endüstri") || text.includes("industry") || text.includes("factory") || text.includes("üretim tesis");
+    const isWarehouse = text.includes("depo") || text.includes("antrepo") || text.includes("lojistik") || text.includes("warehouse") || text.includes("depot") || text.includes("saklama alan");
+
+    if (targetRegion) {
+      const regionId = targetRegion.id;
+      if (isIndustry) {
+        const pinId = `pin-industry-${regionId}`;
+        if (!nextWorld.mapPins.some((p) => p.id === pinId)) {
+          nextWorld.mapPins.push({
+            id: pinId,
+            name: isTr ? `${targetRegion.name} Sanayi Bölgesi` : `${targetRegion.name} Industrial Zone`,
+            type: "industry",
+            regionId,
+          });
+        }
+      } else if (isWarehouse) {
+        const pinId = `pin-warehouse-${regionId}`;
+        if (!nextWorld.mapPins.some((p) => p.id === pinId)) {
+          nextWorld.mapPins.push({
+            id: pinId,
+            name: isTr ? `${targetRegion.name} Depo Alanı` : `${targetRegion.name} Warehouse Depot`,
+            type: "warehouse",
+            regionId,
+          });
+        }
+      }
+    }
+
+    const isArmy = text.includes("ordu") || text.includes("birlik") || text.includes("asker") || text.includes("army") || text.includes("troops") || text.includes("hareket") || text.includes("intikal") || text.includes("sevk");
+
+    if (isArmy) {
+      const mentionedRegions = [];
+      for (const region of regionCatalog) {
+        if (region.name && text.includes(region.name.toLowerCase())) {
+          mentionedRegions.push(region);
+        }
+      }
+
+      if (mentionedRegions.length >= 1) {
+        const destinationRegion = mentionedRegions[mentionedRegions.length - 1];
+        const sourceRegion = mentionedRegions.length > 1 ? mentionedRegions[0] : null;
+
+        let actorCountryCode = "TR"; // default
+        for (const country of countryCatalog) {
+          if (country.name && text.includes(country.name.toLowerCase())) {
+            actorCountryCode = country.code;
+            break;
+          }
+        }
+
+        const armyId = `army-${actorCountryCode.toLowerCase()}`;
+
+        nextWorld.mapPins = nextWorld.mapPins.filter((p) => p.id !== armyId);
+        nextWorld.mapPins.push({
+          id: armyId,
+          name: isTr ? `${actorCountryCode} Kolordusu` : `${actorCountryCode} Army Corps`,
+          type: "army",
+          regionId: destinationRegion.id,
+          fromRegionId: sourceRegion ? sourceRegion.id : null,
+        });
       }
     }
   }

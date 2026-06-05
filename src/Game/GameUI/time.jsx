@@ -9,6 +9,7 @@ import {
     loadCountryNames,
     loadRegionCatalog,
 } from "../../runtime/assets.js";
+import { getLocaleStrings } from "../../runtime/locales.js";
 import { simulateAutoJump, simulateTimelineJump } from "../AI/gameplay.js";
 import {
     normalizeActions,
@@ -396,7 +397,7 @@ const loadCountryBounds = async () => {
     return countryBoundsPromise;
 };
 
-const getEventFocusBounds = (event, { countryBounds, regionBounds }) => {
+const getEventFocusBounds = (event, { countryBounds, regionBounds, polityLookup }) => {
     let resolvedBounds = null;
 
     for (const transfer of event?.impacts?.regionTransfers ?? []) {
@@ -417,7 +418,202 @@ const getEventFocusBounds = (event, { countryBounds, regionBounds }) => {
         resolvedBounds = extendBounds(resolvedBounds, countryBounds.get(code) || null);
     }
 
+    for (const chat of event?.impacts?.createdChats ?? []) {
+        for (const country of chat?.countries ?? []) {
+            const countryCodeOrName = typeof country === "string" ? country : country?.code || country?.name || "";
+            if (!countryCodeOrName) continue;
+            let code = countryBounds.has(countryCodeOrName) ? countryCodeOrName : null;
+            if (!code && polityLookup) {
+                for (const [c, name] of polityLookup.entries()) {
+                    if (name.toLowerCase() === countryCodeOrName.toLowerCase() || c.toLowerCase() === countryCodeOrName.toLowerCase()) {
+                        code = c;
+                        break;
+                    }
+                }
+            }
+            if (code) {
+                resolvedBounds = extendBounds(resolvedBounds, countryBounds.get(code) || null);
+            }
+        }
+    }
+
+    if (!resolvedBounds && polityLookup) {
+        const titleAndDesc = `${event?.title || ""} ${event?.description || ""}`.toLowerCase();
+        for (const [code, name] of polityLookup.entries()) {
+            if (name && titleAndDesc.includes(name.toLowerCase())) {
+                resolvedBounds = extendBounds(resolvedBounds, countryBounds.get(code) || null);
+            }
+        }
+    }
+
     return resolvedBounds;
+};
+
+const getRevealedEventIds = (worldState, latestTurnRecord, visibleEventCount, openPanel) => {
+    if (!worldState) return null;
+
+    if (openPanel !== "history") {
+        return null; // Null indicates all events are revealed (normal mode)
+    }
+
+    const revealedIds = new Set();
+
+    // 1. All events from previous simulation histories are fully revealed
+    const rawHistory = worldState.simulationHistory ?? [];
+    for (let i = 1; i < rawHistory.length; i++) {
+        const turn = rawHistory[i];
+        if (turn && turn.eventIds) {
+            turn.eventIds.forEach((id) => revealedIds.add(id));
+        }
+    }
+
+    // 2. Only first visibleEventCount events of the latest turn are revealed
+    if (latestTurnRecord && latestTurnRecord.events) {
+        const visibleCount = Math.min(visibleEventCount, latestTurnRecord.events.length);
+        for (let i = 0; i < visibleCount; i++) {
+            const ev = latestTurnRecord.events[i];
+            if (ev && ev.id) {
+                revealedIds.add(ev.id);
+            }
+        }
+    }
+
+    return revealedIds;
+};
+
+const getActiveOverrides = (allEvents, revealedEventIds, defaultWorldState, regionCatalog, countryCatalog) => {
+    const baseState = defaultWorldState ?? { regionOwnershipOverrides: {}, polityOverrides: {}, mapPins: [] };
+    if (!revealedEventIds) {
+        return {
+            regionOwnershipOverrides: baseState.regionOwnershipOverrides ?? {},
+            polityOverrides: baseState.polityOverrides ?? {},
+            mapPins: baseState.mapPins ?? [],
+        };
+    }
+
+    const regionOwnershipOverrides = {};
+    const polityOverrides = {};
+    let mapPins = [];
+
+    const isTr = defaultWorldState?.language === "Türkçe";
+
+    for (const event of allEvents ?? []) {
+        if (!event || !event.id || !revealedEventIds.has(event.id)) {
+            continue;
+        }
+
+        const impacts = event.impacts ?? {};
+
+        for (const transfer of impacts.regionTransfers ?? []) {
+            if (transfer && transfer.regionId) {
+                regionOwnershipOverrides[transfer.regionId] = transfer.toCode;
+            }
+        }
+
+        for (const change of impacts.polityChanges ?? []) {
+            if (change && change.code) {
+                polityOverrides[change.code] = {
+                    ...(polityOverrides[change.code] ?? {
+                        aliases: [],
+                        code: change.code,
+                        color: "",
+                        name: "",
+                        note: "",
+                    }),
+                    ...(change.aliases?.length > 0 ? { aliases: change.aliases } : {}),
+                    ...(change.color ? { color: change.color } : {}),
+                    ...(change.name ? { name: change.name } : {}),
+                    ...(change.note ? { note: change.note } : {}),
+                };
+            }
+        }
+
+        // Dynamic pin & army extraction for revealed events
+        const text = `${event.title || ""} ${event.description || ""}`.toLowerCase();
+
+        let targetRegion = null;
+        if (regionCatalog) {
+            for (const region of regionCatalog) {
+                if (region.name && text.includes(region.name.toLowerCase())) {
+                    targetRegion = region;
+                    break;
+                }
+            }
+        }
+
+        if (!targetRegion && impacts.regionTransfers?.length > 0) {
+            const regionId = impacts.regionTransfers[0].regionId;
+            targetRegion = regionCatalog?.find((r) => r.id === regionId);
+        }
+
+        const isIndustry = text.includes("sanayi") || text.includes("fabrika") || text.includes("endüstri") || text.includes("industry") || text.includes("factory") || text.includes("üretim tesis");
+        const isWarehouse = text.includes("depo") || text.includes("antrepo") || text.includes("lojistik") || text.includes("warehouse") || text.includes("depot") || text.includes("saklama alan");
+
+        if (targetRegion) {
+            const regionId = targetRegion.id;
+            if (isIndustry) {
+                const pinId = `pin-industry-${regionId}`;
+                if (!mapPins.some((p) => p.id === pinId)) {
+                    mapPins.push({
+                        id: pinId,
+                        name: isTr ? `${targetRegion.name} Sanayi Bölgesi` : `${targetRegion.name} Industrial Zone`,
+                        type: "industry",
+                        regionId,
+                    });
+                }
+            } else if (isWarehouse) {
+                const pinId = `pin-warehouse-${regionId}`;
+                if (!mapPins.some((p) => p.id === pinId)) {
+                    mapPins.push({
+                        id: pinId,
+                        name: isTr ? `${targetRegion.name} Depo Alanı` : `${targetRegion.name} Warehouse Depot`,
+                        type: "warehouse",
+                        regionId,
+                    });
+                }
+            }
+        }
+
+        const isArmy = text.includes("ordu") || text.includes("birlik") || text.includes("asker") || text.includes("army") || text.includes("troops") || text.includes("hareket") || text.includes("intikal") || text.includes("sevk");
+
+        if (isArmy && regionCatalog && countryCatalog) {
+            const mentionedRegions = [];
+            for (const region of regionCatalog) {
+                if (region.name && text.includes(region.name.toLowerCase())) {
+                    mentionedRegions.push(region);
+                }
+            }
+
+            if (mentionedRegions.length >= 1) {
+                const destinationRegion = mentionedRegions[mentionedRegions.length - 1];
+                const sourceRegion = mentionedRegions.length > 1 ? mentionedRegions[0] : null;
+
+                let actorCountryCode = "TR";
+                for (const country of countryCatalog) {
+                    if (country.name && text.includes(country.name.toLowerCase())) {
+                        actorCountryCode = country.code;
+                        break;
+                    }
+                }
+
+                const armyId = `army-${actorCountryCode.toLowerCase()}`;
+                mapPins = mapPins.filter((p) => p.id !== armyId);
+                mapPins.push({
+                    id: armyId,
+                    name: isTr ? `${actorCountryCode} Kolordusu` : `${actorCountryCode} Army Corps`,
+                    type: "army",
+                    regionId: destinationRegion.id,
+                    fromRegionId: sourceRegion ? sourceRegion.id : null,
+                });
+            }
+        }
+    }
+
+    return {
+        regionOwnershipOverrides,
+        polityOverrides,
+        mapPins,
+    };
 };
 
 const getMapInstance = (mapRef) => mapRef?.current?.getMap?.() ?? mapRef?.current ?? null;
@@ -687,14 +883,14 @@ const PanelChrome = ({
         <div
         style={{
             ...panelSurface,
-            bottom: isOpen ? "4.9rem" : "-34rem",
+            bottom: isOpen ? "4.9rem" : "-40rem",
             display: "flex",
             flexDirection: "column",
-            height: "calc(100vh - 33rem)",
-            left: "0.5rem",
-            maxHeight: "calc(100vh - 33rem)",
+            height: "calc(100vh - 13rem)",
+            right: "0.5rem",
+            maxHeight: "800px",
             maxWidth: "calc(100vw - 1rem)",
-            minHeight: "10rem",
+            minHeight: "25rem",
             opacity: isOpen ? 1 : 0,
             pointerEvents: isOpen ? "auto" : "none",
             transition: "bottom 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s ease",
@@ -810,13 +1006,14 @@ const TimelineSkipPanel = ({
     onClose,
     onJump,
     topOffset,
+    loc,
 }) => {
     const jumpOptions = [
-        { label: "1 week", sublabel: dayjs(currentDate).add(7, "day").format("M/D/YYYY"), days: 7 },
-        { label: "1 month", sublabel: dayjs(currentDate).add(1, "month").format("M/D/YYYY"), days: 30 },
-        { label: "3 months", sublabel: dayjs(currentDate).add(3, "month").format("M/D/YYYY"), days: 90 },
-        { label: "6 months", sublabel: dayjs(currentDate).add(6, "month").format("M/D/YYYY"), days: 180 },
-        { label: "1 year", sublabel: dayjs(currentDate).add(1, "year").format("M/D/YYYY"), days: 365 },
+        { label: loc.dur1w, sublabel: dayjs(currentDate).add(7, "day").locale(loc.code).format(loc.dateFormat), days: 7 },
+        { label: loc.dur1m, sublabel: dayjs(currentDate).add(1, "month").locale(loc.code).format(loc.dateFormat), days: 30 },
+        { label: loc.dur3m, sublabel: dayjs(currentDate).add(3, "month").locale(loc.code).format(loc.dateFormat), days: 90 },
+        { label: loc.dur6m, sublabel: dayjs(currentDate).add(6, "month").locale(loc.code).format(loc.dateFormat), days: 180 },
+        { label: loc.dur1y, sublabel: dayjs(currentDate).add(1, "year").locale(loc.code).format(loc.dateFormat), days: 365 },
     ];
 
     return (
@@ -824,7 +1021,7 @@ const TimelineSkipPanel = ({
         eyebrow=""
         isOpen={isOpen}
         onClose={onClose}
-        title="Timeline"
+        title={loc.timeSkip}
         topOffset={topOffset}
         >
         <div
@@ -849,7 +1046,7 @@ const TimelineSkipPanel = ({
             width: "5.5rem",
         }}
         >
-        {dayjs(currentDate).format("M/D/YYYY")}
+        {dayjs(currentDate).locale(loc.code).format(loc.dateFormat)}
         </div>
 
         {jumpOptions.map((opt) => (
@@ -881,7 +1078,7 @@ const TimelineSkipPanel = ({
             width: "12.5rem",
         }}
         >
-        <div style={{ fontSize: "0.85rem", fontWeight: 700 }}>Auto-jump</div>
+        <div style={{ fontSize: "0.85rem", fontWeight: 700 }}>{loc.autoJump}</div>
         </button>
         </div>
 
@@ -932,6 +1129,7 @@ const TimelineHistoryPanel = ({
     record,
     topOffset,
     visibleEventCount,
+    loc,
 }) => {
     const totalEvents = record?.events?.length || 0;
     const visibleEvents =
@@ -958,13 +1156,13 @@ const TimelineHistoryPanel = ({
         isOpen={isOpen}
         onClose={onClose}
         subtitle={record?.rangeLabel || ""}
-        title="Events"
+        title={loc.eventsTitle}
         topOffset={topOffset}
         >
         {!record ? (
-            <EmptyPanelState text="No event chain is available yet." />
+            <EmptyPanelState text={loc.noEventChain} />
         ) : totalEvents === 0 ? (
-            <EmptyPanelState text="No world events were recorded for this time skip." />
+            <EmptyPanelState text={loc.noWorldEvents} />
         ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
             {visibleEvents.map((event, index) => {
@@ -988,7 +1186,7 @@ const TimelineHistoryPanel = ({
                             }}
                             >
                             <MapIcon />
-                            <span>Show on map</span>
+                            <span>{loc.showOnMap}</span>
                             </button>
                             </div>
                         ) : null
@@ -1000,7 +1198,7 @@ const TimelineHistoryPanel = ({
             {hasMoreEvents && (
                 <button
                 type="button"
-                onClick={() => onRevealNextEvent()}
+                onClick={onRevealNextEvent}
                 style={{
                     ...ghostButtonStyle,
                     minHeight: "2.5rem",
@@ -1008,7 +1206,7 @@ const TimelineHistoryPanel = ({
                 }}
                 >
                 <ChevronDownIcon />
-                <span>Next event</span>
+                <span>{loc.revealNext}</span>
                 </button>
             )}
             </div>
@@ -1176,14 +1374,16 @@ const DateWidget = ({
     }, [eventLookup, gameData, lookups, worldState]);
 
     const latestTurnRecord = historyRecords[0] || null;
-    const totalVisibleEvents = latestTurnRecord?.events?.length || 0;
+    const totalEvents = latestTurnRecord?.events?.length || 0;
     const activeVisibleEvent =
-    openPanel === "history" && totalVisibleEvents > 0
-    ? latestTurnRecord.events[Math.min(Math.max(visibleEventCount, 1), totalVisibleEvents) - 1]
+    openPanel === "history" && totalEvents > 0
+    ? latestTurnRecord.events[Math.min(Math.max(visibleEventCount, 1), totalEvents) - 1]
     : null;
 
+    const loc = getLocaleStrings(gameData?.language);
+
     const displayDate = gameData
-    ? dayjs(gameData.gameDate).format("MMMM Do, YYYY")
+    ? dayjs(gameData.gameDate).locale(loc.code).format(loc.dateFormat)
     : "Loading...";
     const currentDate = gameData?.gameDate ?? dayjs().format("YYYY-MM-DD");
 
@@ -1196,22 +1396,36 @@ const DateWidget = ({
             return;
         }
 
-        const bounds = getEventFocusBounds(activeVisibleEvent, { countryBounds, regionBounds });
+        const bounds = getEventFocusBounds(activeVisibleEvent, { countryBounds, regionBounds, polityLookup });
         focusMapOnBounds(mapRef, bounds);
-    }, [activeVisibleEvent, countryBounds, mapRef, regionBounds]);
+    }, [activeVisibleEvent, countryBounds, mapRef, regionBounds, polityLookup]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const revealedIds = getRevealedEventIds(worldState, latestTurnRecord, visibleEventCount, openPanel);
+        const regionCatalog = Array.from(regionLookup.values());
+        const countryCatalog = Array.from(polityLookup.entries()).map(([code, name]) => ({ code, name }));
+        const activeOverrides = getActiveOverrides(events, revealedIds, worldState, regionCatalog, countryCatalog);
+
+        window.dispatchEvent(
+            new CustomEvent("timeline-map-state-update", {
+                detail: activeOverrides,
+            })
+        );
+    }, [worldState, events, latestTurnRecord, visibleEventCount, openPanel, regionLookup, polityLookup]);
 
     const revealNextEvent = () => {
         setVisibleEventCount((current) => {
-            if (!totalVisibleEvents) {
+            if (!totalEvents) {
                 return 1;
             }
 
-            return Math.min(totalVisibleEvents, current + 1);
+            return Math.min(totalEvents, current + 1);
         });
     };
 
     const focusEvent = (event) => {
-        const bounds = getEventFocusBounds(event, { countryBounds, regionBounds });
+        const bounds = getEventFocusBounds(event, { countryBounds, regionBounds, polityLookup });
         focusMapOnBounds(mapRef, bounds);
     };
 
@@ -1226,6 +1440,7 @@ const DateWidget = ({
         onClose={() => setPanel(null)}
         onJump={(days) => runJump(days, "jump")}
         topOffset={topOffset}
+        loc={loc}
         />
         <TimelineHistoryPanel
         isOpen={openPanel === "history"}
@@ -1236,6 +1451,7 @@ const DateWidget = ({
         record={latestTurnRecord}
         topOffset={topOffset}
         visibleEventCount={visibleEventCount}
+        loc={loc}
         />
 
         <div
@@ -1247,6 +1463,7 @@ const DateWidget = ({
         >
         <button
         type="button"
+        title={loc.eventsTitle}
         style={{
             ...buttonStyle,
             color: openPanel === "history" ? "#bfdbfe" : buttonStyle.color,
@@ -1274,6 +1491,7 @@ const DateWidget = ({
 
         <button
         type="button"
+        title={loc.timeSkip}
         style={{
             ...buttonStyle,
             color: openPanel === "skip" ? "rgba(196,165,255,0.9)" : buttonStyle.color,

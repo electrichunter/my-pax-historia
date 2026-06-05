@@ -110,6 +110,7 @@ const Main = ({
   isTerrainEnabled,
   setIsGlobeEnabled,
   setIsTerrainEnabled,
+  setCurrentScreen,
 }) => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
@@ -181,7 +182,7 @@ const Main = ({
   return (
     <>
       {showWebGLWarning && <WebGLWarningPopup />}
-      <LibraryTopBar />
+      <LibraryTopBar setCurrentScreen={setCurrentScreen} />
       <DateWidget
         activePanel={activeBottomPanel}
         mapRef={mapRef}

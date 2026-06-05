@@ -261,7 +261,10 @@ const buildWorldSummary = async (bundle) => {
     `Player polity: ${bundle.game.country || "Unknown polity"}`,
     `Current round: ${bundle.game.round}`,
     `Current date: ${bundle.game.gameDate || "unknown"}`,
-    `Language: ${bundle.world.language || bundle.game.language || "English"}`,
+    `Language: ${(() => {
+      const lang = bundle.game.language || bundle.world.language || "English";
+      return `${lang} (CRITICAL: All generated text, dialogue, events, titles, and descriptions MUST be exclusively in ${lang})`;
+    })()}`,
     `Difficulty: ${bundle.game.difficulty || "standard"}`,
     "",
     "Territorial changes from the base scenario:",
@@ -454,7 +457,10 @@ const buildTemplateVariables = async (
     difficultyGuidanceJumpForward: buildDifficultyGuidance(bundle.game.difficulty, "jump"),
     eventsToConsolidate: eventsToConsolidate || buildEventHistoryText(bundle.events, { limit: 12 }),
     gameMasterRequest,
-    language: bundle.world.language || bundle.game.language || "English",
+    language: (() => {
+      const lang = bundle.game.language || bundle.world.language || "English";
+      return `${lang} (CRITICAL: All generated text, dialogue, events, titles, and descriptions MUST be exclusively in ${lang})`;
+    })(),
     lastSpeaker,
     numberOfRegions: String(regionCatalog.length),
     plannedActions: buildActionHistoryText(bundle.actions),
@@ -586,21 +592,36 @@ const inferInviteeNames = async (text, world, playerCountry = "") => {
 };
 
 const fallbackActionSuggestions = async (bundle) => {
+  const isTr = bundle.game.language === "Türkçe";
   const recentTitles = normalizeEvents(bundle.events).slice(-3).map((event) => event.title);
-  const topics = DEFAULT_SUGGESTION_TOPICS.map((topic, index) => {
+  
+  const topicsData = isTr ? [
+    { title: "İç cepheyi dengele", description: "İç cepheyi düzenli tutun ve dış baskı artarken iç sürüklenme ihtimalini azaltın." },
+    { title: "Diplomatik alanı şekillendir", description: "Bir sonraki kriz sertleşmeden önce düşman seçeneklerini daraltmak için görüşmeleri, sinyalleri ve kozları kullanın." },
+    { title: "Askeri koz hazırla", description: "Rakiplerinizin kapasitenizi planlarına dahil etmesi için görünür bir hazırlık ve pratik rezervler oluşturun." },
+    { title: "Ekonomik derinliği güvenceye al", description: "Sonraki risklerin sürdürülebilir olup olmayacağını belirleyen endüstriyel ve mali tabanı genişletin." }
+  ] : DEFAULT_SUGGESTION_TOPICS;
+
+  const topics = topicsData.map((topic, index) => {
     const recentTitle = recentTitles[index];
     const actions = [
       normalizeActionEntry({
         kind: "action",
         source: "suggested",
-        text: `Issue a concrete order addressing ${recentTitle || topic.title.toLowerCase()} and assign a responsible ministry or command.`,
-        title: recentTitle ? `Respond to ${recentTitle}` : `Act on ${topic.title}`,
+        text: isTr
+          ? `${recentTitle || topic.title.toLowerCase()} konusuna yönelik somut bir emir verin ve ilgili bir bakanlık veya komuta kademesini görevlendirin.`
+          : `Issue a concrete order addressing ${recentTitle || topic.title.toLowerCase()} and assign a responsible ministry or command.`,
+        title: recentTitle
+          ? isTr ? `Şuna yanıt ver: ${recentTitle}` : `Respond to ${recentTitle}`
+          : isTr ? `Şunun için harekete geç: ${topic.title}` : `Act on ${topic.title}`,
       }),
       normalizeActionEntry({
         kind: "action",
         source: "suggested",
-        text: `Prepare a second-order measure that protects ${bundle.game.country || "the polity"} if this line of effort triggers resistance.`,
-        title: "Create a contingency layer",
+        text: isTr
+          ? `Bu hamlenin direniş tetiklemesi durumunda ${bundle.game.country || "devleti"} koruyacak ikinci dereceden bir önlem hazırlayın.`
+          : `Prepare a second-order measure that protects ${bundle.game.country || "the polity"} if this line of effort triggers resistance.`,
+        title: isTr ? "Bir acil durum planı oluştur" : "Create a contingency layer",
       }),
     ].filter(Boolean);
 
@@ -701,22 +722,31 @@ const buildGeneratedChat = async (chatLike, linkEventId, world) => {
 };
 
 const fallbackJumpSimulation = async ({ bundle, days, mode, targetDate }) => {
+  const isTr = bundle.game.language === "Türkçe";
   const plannedActions = normalizeActions(bundle.actions).filter((action) => action.status === "planned");
-  const firstThreeActions = plannedActions.slice(0, 3);
   const events = [];
 
-  if (firstThreeActions.length > 0) {
-    firstThreeActions.forEach((action, index) => {
+  const regionCatalog = await loadRegionCatalog();
+  const countryCatalog = await loadCountryNames();
+  const currentOverrides = { ...(bundle.world?.regionOwnershipOverrides || {}) };
+
+  // 1. Process all planned actions
+  if (plannedActions.length > 0) {
+    plannedActions.forEach((action, index) => {
       const eventDate = dayjs(bundle.game.gameDate)
-        .add(Math.max(1, Math.round(((index + 1) / (firstThreeActions.length + 1)) * Math.max(days, 1))), "day")
+        .add(Math.max(1, Math.round(((index + 1) / (plannedActions.length + 1)) * Math.max(days, 1))), "day")
         .format("YYYY-MM-DD");
 
       events.push({
         date: eventDate,
         description:
           action.kind === "chat"
-            ? `${bundle.game.country} opens a deliberate diplomatic channel tied to ${action.title.toLowerCase()}, forcing counterparts to weigh terms instead of guessing intent.`
-            : `${bundle.game.country} begins implementing ${action.title.toLowerCase()}, producing immediate administrative and political consequences that other powers start to notice.`,
+            ? isTr
+              ? `${bundle.game.country}, ${action.title.toLowerCase()} konusunda niyet okumak yerine tarafları masaya oturmaya zorlayarak kasıtlı bir diplomatik kanal açıyor.`
+              : `${bundle.game.country} opens a deliberate diplomatic channel tied to ${action.title.toLowerCase()}, forcing counterparts to weigh terms instead of guessing intent.`
+            : isTr
+              ? `${bundle.game.country}, ${action.title.toLowerCase()} için uygulamaya geçiyor; bu durum diğer güçlerin de dikkatini çeken ani idari ve siyasi sonuçlar doğuruyor.`
+              : `${bundle.game.country} begins implementing ${action.title.toLowerCase()}, producing immediate administrative and political consequences that other powers start to notice.`,
         impacts: {
           createdChats:
             action.kind === "chat" && action.invitees.length > 0 && action.chatStarter
@@ -732,46 +762,134 @@ const fallbackJumpSimulation = async ({ bundle, days, mode, targetDate }) => {
           polityChanges: [],
           regionTransfers: [],
         },
-        importance: index === firstThreeActions.length - 1 ? "major" : "minor",
+        importance: "minor",
         kind: action.kind === "chat" ? "diplomacy" : "player",
-        notable: index === firstThreeActions.length - 1,
+        notable: false,
         playerRelated: true,
         title:
           action.kind === "chat"
-            ? `${bundle.game.country} opens a diplomatic channel`
-            : `${bundle.game.country} acts on ${action.title.toLowerCase()}`,
+            ? isTr
+              ? `${bundle.game.country} diplomatik bir kanal açıyor`
+              : `${bundle.game.country} opens a diplomatic channel`
+            : isTr
+              ? `${bundle.game.country}, ${action.title.toLowerCase()} üzerine harekete geçiyor`
+              : `${bundle.game.country} acts on ${action.title.toLowerCase()}`,
       });
     });
-  } else {
-    const midpoint = dayjs(bundle.game.gameDate)
-      .add(Math.max(1, Math.round(Math.max(days, 1) / 2)), "day")
+  }
+
+  // 2. Pad with dynamic events if total count is under 4
+  const targetCount = Math.max(4, plannedActions.length);
+  while (events.length < targetCount) {
+    const eventIndex = events.length;
+    const eventDate = dayjs(bundle.game.gameDate)
+      .add(Math.max(1, Math.round(((eventIndex + 1) / (targetCount + 1)) * Math.max(days, 1))), "day")
       .format("YYYY-MM-DD");
-    events.push({
-      date: midpoint,
-      description: `Foreign ministries and general staffs keep adjusting to the current balance of power while ${bundle.game.country} gathers its next move.`,
-      impacts: {
-        createdChats: [],
-        polityChanges: [],
-        regionTransfers: [],
-      },
-      importance: mode === "auto" ? "major" : "minor",
-      kind: "world",
-      notable: mode === "auto",
-      playerRelated: false,
-      title: "The international balance remains in motion",
-    });
+
+    if (regionCatalog.length > 0 && countryCatalog.length >= 2 && Math.random() < 0.7) {
+      // Choose a random region
+      const region = regionCatalog[Math.floor(Math.random() * regionCatalog.length)];
+      const regionId = region.id;
+      const regionName = region.name;
+      const defaultOwnerCode = region.countryCode || "US";
+
+      // Resolve current owner
+      const currentOwnerCode = currentOverrides[regionId] || defaultOwnerCode;
+      const currentOwner = countryCatalog.find((c) => c.code === currentOwnerCode);
+      const currentOwnerName = currentOwner ? currentOwner.name : currentOwnerCode;
+
+      // Choose a random new owner
+      let newOwner = countryCatalog[Math.floor(Math.random() * countryCatalog.length)];
+      let attempts = 0;
+      while (newOwner && newOwner.code === currentOwnerCode && attempts < 10) {
+        newOwner = countryCatalog[Math.floor(Math.random() * countryCatalog.length)];
+        attempts++;
+      }
+
+      if (newOwner && newOwner.code !== currentOwnerCode) {
+        const newOwnerCode = newOwner.code;
+        const newOwnerName = newOwner.name;
+
+        events.push({
+          date: eventDate,
+          description: isTr
+            ? `Bölgesel gerilimlerin ve yapılan müzakerelerin ardından, daha önce ${currentOwnerName} idaresinde olan ${regionName} bölgesi resmen ${newOwnerName} kontrolüne geçti.`
+            : `Following intense regional negotiations, the territory of ${regionName}, previously governed by ${currentOwnerName}, has formally transitioned to the administration of ${newOwnerName}.`,
+          impacts: {
+            createdChats: [],
+            polityChanges: [],
+            regionTransfers: [
+              {
+                regionId,
+                regionName,
+                toCode: newOwnerCode,
+              },
+            ],
+          },
+          importance: "minor",
+          kind: "world",
+          notable: false,
+          playerRelated: false,
+          title: isTr
+            ? `${newOwnerName}, ${regionName} bölgesini devraldı`
+            : `${newOwnerName} assumes control of ${regionName}`,
+        });
+
+        currentOverrides[regionId] = newOwnerCode;
+        continue;
+      }
+    }
+
+    // Fallback/alternative to diplomatic/alliance event
+    if (countryCatalog.length >= 2) {
+      const countryA = countryCatalog[Math.floor(Math.random() * countryCatalog.length)];
+      let countryB = countryCatalog[Math.floor(Math.random() * countryCatalog.length)];
+      let attempts = 0;
+      while (countryB && countryB.code === countryA.code && attempts < 10) {
+        countryB = countryCatalog[Math.floor(Math.random() * countryCatalog.length)];
+        attempts++;
+      }
+
+      if (countryA && countryB && countryA.code !== countryB.code) {
+        events.push({
+          date: eventDate,
+          description: isTr
+            ? `${countryA.name} ve ${countryB.name} temsilcileri, ticari engelleri azaltmak ve sınır güvenliğini artırmak amacıyla yeni bir işbirliği protokolü imzaladı.`
+            : `Representatives from ${countryA.name} and ${countryB.name} signed a new cooperative agreement aimed at reducing trade barriers and aligning border security frameworks.`,
+          impacts: {
+            createdChats: [],
+            polityChanges: [],
+            regionTransfers: [],
+          },
+          importance: "minor",
+          kind: "diplomacy",
+          notable: false,
+          playerRelated: false,
+          title: isTr
+            ? `${countryA.name} ve ${countryB.name} arasında anlaşma`
+            : `${countryA.name} and ${countryB.name} reach pact`,
+        });
+      }
+    }
+  }
+
+  // 3. Mark the last event as major/notable
+  if (events.length > 0) {
+    const lastIdx = events.length - 1;
+    events[lastIdx].importance = "major";
+    events[lastIdx].notable = true;
   }
 
   const lastEvent = events.at(-1) ?? null;
   const catalyst = lastEvent
     ? {
-        choices: [
-          "Press the advantage immediately",
-          "Probe cautiously before committing",
-          "Hold position and gather more intelligence",
-        ],
+        choices: isTr
+          ? ["Avantajı hemen kullan", "Harekete geçmeden önce temkinli yaklaş", "Bekle ve daha fazla istihbarat topla"]
+          : ["Press the advantage immediately", "Probe cautiously before committing", "Hold position and gather more intelligence"],
         opening: `${lastEvent.title}. ${lastEvent.description}`,
-        premise: `This scene begins as ${lastEvent.title.toLowerCase()} reaches the point where direct judgment matters.`,
+        premise: isTr
+          ? `Bu olay, ${lastEvent.title.toLowerCase()} karar anına yaklaştığında başlıyor.`
+          : `This scene begins as ${lastEvent.title.toLowerCase()} reaches the point where direct judgment matters.`,
         title: lastEvent.title,
       }
     : null;
@@ -783,7 +901,11 @@ const fallbackJumpSimulation = async ({ bundle, days, mode, targetDate }) => {
     stopDate: targetDate,
     summary:
       plannedActions.length > 0
-        ? `${bundle.game.country} moves from planning into execution, and the world begins adjusting to the turn's most concrete orders.`
+        ? isTr
+          ? `${bundle.game.country} planlama aşamasından uygulamaya geçiyor ve dünya bu turun en somut emirlerine uyum sağlamaya başlıyor.`
+          : `${bundle.game.country} moves from planning into execution, and the world begins adjusting to the turn's most concrete orders.`
+        : isTr
+        ? `Zaman, ${bundle.game.country} tarafından doğrudan bir emir verilmeden ilerliyor, ancak daha geniş sistem değişmeye ve baskı oluşturmaya devam ediyor.`
         : `Time advances without a direct order from ${bundle.game.country}, but the wider system keeps shifting and building pressure.`,
   };
 };
@@ -809,6 +931,8 @@ const applySimulationResult = async ({
   baseWorld,
   result,
 }) => {
+  const regionCatalog = await loadRegionCatalog();
+  const countryCatalog = await loadCountryNames();
   const generatedEvents = normalizeArray(result.events)
     .map((entry, index) => normalizeGeneratedEvent(entry, index))
     .filter(Boolean);
@@ -837,6 +961,8 @@ const applySimulationResult = async ({
   const { colors: nextColors, world: worldWithImpacts } = applyEventImpactsToWorld({
     colors: baseColors,
     events: generatedEvents,
+    regionCatalog,
+    countryCatalog,
     world: {
       ...baseWorld,
       activeCatalyst: result.catalyst ?? null,
@@ -885,6 +1011,7 @@ export const generateActionSuggestions = async ({ force = true } = {}) => {
   const variables = await buildTemplateVariables(bundle);
   const payload = await runJsonTask("actions", {
     fallback: () => fallbackActionSuggestions(bundle),
+    timeoutMs: 45000,
     userMessage: "Generate current strategic action suggestions as JSON only.",
     variables,
   });
@@ -1157,7 +1284,7 @@ export const simulateTimelineJump = async ({ days, mode = "jump" } = {}) => {
   const variables = await buildTemplateVariables(bundle, { targetDate });
   const payload = await runJsonTask(mode === "auto" ? "autoJumpForward" : "jumpForward", {
     fallback: () => fallbackJumpSimulation({ bundle, days: safeDays, mode, targetDate }),
-    timeoutMs: safeDays >= 90 || mode === "auto" ? 9000 : 12000,
+    timeoutMs: 45000,
     userMessage:
       mode === "auto"
         ? "Simulate an auto-jump and stop at the next notable or player-relevant event. Return JSON only."
