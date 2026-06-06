@@ -1,0 +1,50 @@
+# NOTICE — Pax Historia
+
+## Telif Hakkı / Copyright
+
+Copyright (c) 2025–2026 Ouysam. Tüm hakları saklıdır.
+
+Bu depo ve içindeki tüm kaynak kodu, grafik, tasarım, oyun mekaniği ve algoritmalar
+**Ouysam**'a aittir ve onun tarafından geliştirilmiştir.
+
+---
+
+## Lisans
+
+Bu proje **Creative Commons BY-NC-ND 4.0** lisansı altında yayımlanmıştır.
+Lisansın tam metni için `LICENSE` dosyasını inceleyin.
+
+Lisans kısaca şunu söyler:
+- ✅ Kaynak kodu inceleyebilir ve yerel ortamınızda çalıştırabilirsiniz.
+- ✅ Atıf vererek paylaşabilirsiniz.
+- ❌ **Ticari amaçla kullanamazsınız.**
+- ❌ **Türev ürün oluşturup dağıtamazsınız.**
+- ❌ **Fork edip kendi ürününüz olarak sunamazsınız.**
+
+---
+
+## Ticari Lisans
+
+Bu projeyi ticari bir üründe kullanmak, yeniden satmak, barındırmak
+(SaaS/PaaS), white-label etmek veya herhangi bir şekilde para kazanmak
+amacıyla kullanmak isteyenler, ayrı bir **ticari lisans sözleşmesi** imzalamalıdır.
+
+Ticari lisans talebi için iletişim:
+> [buraya kendi e-posta veya iletişim bilginizi ekleyin]
+
+---
+
+## Branch / Fork Sahiplerine Uyarı
+
+Bu depoya katkıda bulunan, fork açan veya branch oluşturan tüm kişiler,
+yukarıdaki lisans koşullarını kabul etmiş sayılır. Hiçbir katkıda bulunan,
+projenin ticari sürümünde hak iddia edemez.
+
+Katkılar (pull request, issue, yorum vb.) yalnızca eğitim/test amaçlı kabul
+edilmiş olup katkıda bulunana herhangi bir mülkiyet, telif hakkı veya
+ticari kullanım hakkı vermez.
+
+---
+
+_Bu belge yasal bir uyarı niteliğindedir ve yürürlükteki telif hakkı yasaları
+kapsamında geçerliliğini korur._
