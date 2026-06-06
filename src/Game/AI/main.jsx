@@ -563,15 +563,22 @@ function buildAdvisorHistoryText(messages) {
 
 function buildWorldSummary(gameData, worldData, eventData) {
     const world = normalizeWorldState(worldData);
+    const relations = world.relations || {};
+    const relationsList = Object.entries(relations)
+        .map(([code, score]) => `${code}: ${score >= 0 ? '+' : ''}${score}`)
+        .join(", ");
+    const relationsText = relationsList ? `Relations with player country: ${relationsList}` : "";
+
     return [
         `Player polity: ${gameData.country || "Unknown polity"}`,
         `Current date: ${gameData.gameDate || "unknown"}`,
         `Difficulty: ${gameData.difficulty || "standard"}`,
+        relationsText,
         `World before round one: ${world.startingTimelineText || "No world briefing provided."}`,
         `Simulation rules: ${world.simulationRules || "No extra simulation rules were provided."}`,
         `Recent events:`,
         buildEventHistoryText(eventData),
-    ].join("\n");
+    ].filter(Boolean).join("\n");
 }
 
 function buildPromptVariables({
@@ -663,7 +670,19 @@ async function buildAdvisorSystemPrompt() {
     });
     const helperValues = resolveHelperValues(promptPack.helpers, variables);
 
-    return renderTemplate(promptPack.advisor, { ...variables, ...helperValues });
+    const basePrompt = renderTemplate(promptPack.advisor, { ...variables, ...helperValues });
+
+    const personality = gameData.advisorPersonality || "dove";
+    let personalityPrompt = "";
+    if (personality === "hawk") {
+        personalityPrompt = "\n\n**IMPORTANT PERSONALITY STANCE:** You are currently acting as a HAWK advisor. You must prioritize aggressive military options, defense build-ups, territorial security, deterrence, showing strength, and skeptical view of diplomatic compromise. Frame your advice with strong militaristic pragmatism.";
+    } else if (personality === "dove") {
+        personalityPrompt = "\n\n**IMPORTANT PERSONALITY STANCE:** You are currently acting as a DOVE advisor. You must prioritize peaceful diplomacy, international trade, alliances, reconciliation, economic growth, and finding compromises instead of military solutions. Frame your advice around peace, cooperation, and diplomatic goodwill.";
+    } else if (personality === "fox") {
+        personalityPrompt = "\n\n**IMPORTANT PERSONALITY STANCE:** You are currently acting as a FOX advisor. You must prioritize pragmatism, opportunism, balance of power, playing factions against each other, double-dealing, and highly calculated risk-taking. Do not commit permanently to alliances or wars; recommend flexible, self-serving actions.";
+    }
+
+    return basePrompt + personalityPrompt;
 }
 
 export async function buildDiplomaticSystemPrompt(countries, playerCountry) {

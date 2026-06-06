@@ -171,6 +171,55 @@ const AdvisorPanel = ({ isAdvisorOpen }) => {
     const messagesEndRef            = useRef(null);
     const [hasOpened, setHasOpened] = useState(isAdvisorOpen);
     const [hasBootstrapped, setHasBootstrapped] = useState(false);
+    const [personality, setPersonality] = useState("dove");
+
+    useEffect(() => {
+        if (isAdvisorOpen) {
+            readJson(JSON_URLS.game, { defaultValue: {}, force: true })
+                .then(data => {
+                    if (data.advisorPersonality) {
+                        setPersonality(data.advisorPersonality);
+                    }
+                })
+                .catch(err => console.error("Failed to load advisor personality:", err));
+        }
+    }, [isAdvisorOpen]);
+
+    const handlePersonalityChange = async (newVal) => {
+        setPersonality(newVal);
+        try {
+            const data = await readJson(JSON_URLS.game, { defaultValue: {}, force: true });
+            data.advisorPersonality = newVal;
+            await writeJson(JSON_URLS.game, data);
+            
+            let introductionText = "";
+            if (newVal === "hawk") {
+                introductionText = loc.code === "tr" 
+                    ? "⚔️ **Şahin Kişiliği Aktif:** Artık askeri güce, saldırganlığa ve jeopolitik üstünlüğe odaklanan kararlar önereceğim."
+                    : "⚔️ **Hawk Personality Active:** I will now recommend decisions focused on military power, aggressiveness, and geopolitical dominance.";
+            } else if (newVal === "dove") {
+                introductionText = loc.code === "tr"
+                    ? "🕊️ **Güvercin Kişiliği Aktif:** Artık diplomatik çözümlere, ittifaklara ve barışçıl ekonomik gelişime odaklanan kararlar önereceğim."
+                    : "🕊️ **Dove Personality Active:** I will now recommend decisions focused on diplomatic solutions, alliances, and peaceful economic growth.";
+            } else {
+                introductionText = loc.code === "tr"
+                    ? "🦊 **Tilki Kişiliği Aktif:** Artık fırsatçı, pragmatik ve güç dengelerini kollayan esnek kararlar önereceğim."
+                    : "🦊 **Fox Personality Active:** I will now recommend opportunistic, pragmatic, and flexible decisions balancing power relations.";
+            }
+
+            const gameDate = data.gameDate || null;
+            const systemMsg = { role: "advisor", text: introductionText, time: gameDate };
+            
+            setMessages(prev => {
+                const updated = [...prev, systemMsg];
+                saveMessages(updated);
+                return updated;
+            });
+            loadHistory([...messages, systemMsg]);
+        } catch (e) {
+            console.error("Failed to update personality in game.json", e);
+        }
+    };
 
     useEffect(() => {
         if (isAdvisorOpen) setHasOpened(true);
@@ -256,14 +305,41 @@ const AdvisorPanel = ({ isAdvisorOpen }) => {
             color: "white", fontFamily: "sans-serif", overflow: "hidden",
         }}>
         {/* Header */}
-        <div style={{ padding: "1.5rem 1.25rem 1rem", borderBottom: "1px solid rgba(255,255,255,0.1)", display: "flex", alignItems: "center", gap: "0.75rem" }}>
-        <span style={{ fontSize: "1.5rem" }}>🧭</span>
-        <h2 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 600, flex: 1 }}>{loc.advisorTitle}</h2>
-        <button
-        onClick={async () => { setMessages([]); startChat(); await saveMessages([]); }}
-        title={loc.clearChat}
-        style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: "1.5rem", lineHeight: 1, padding: 0, display: "flex", alignItems: "center" }}
-        >🗑</button>
+        <div style={{ padding: "1.25rem 1.25rem 0.75rem", borderBottom: "1px solid rgba(255,255,255,0.1)", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                <span style={{ fontSize: "1.5rem" }}>🧭</span>
+                <h2 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 600, flex: 1 }}>{loc.advisorTitle}</h2>
+                <button
+                onClick={async () => { setMessages([]); startChat(); await saveMessages([]); }}
+                title={loc.clearChat}
+                style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: "1.5rem", lineHeight: 1, padding: 0, display: "flex", alignItems: "center" }}
+                >🗑</button>
+            </div>
+            
+            {/* Personality Selector */}
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.25rem" }}>
+                <span style={{ fontSize: "0.75rem", color: "rgba(255,255,255,0.5)" }}>{loc.advisorPersonality}:</span>
+                <select
+                    value={personality}
+                    onChange={(e) => handlePersonalityChange(e.target.value)}
+                    style={{
+                        flex: 1,
+                        backgroundColor: "rgba(0, 0, 0, 0.3)",
+                        border: "1px solid rgba(255, 255, 255, 0.15)",
+                        borderRadius: "6px",
+                        color: "white",
+                        fontSize: "0.75rem",
+                        padding: "0.25rem 0.5rem",
+                        outline: "none",
+                        cursor: "pointer",
+                        fontFamily: "sans-serif"
+                    }}
+                >
+                    <option value="dove">{loc.doveLabel}</option>
+                    <option value="hawk">{loc.hawkLabel}</option>
+                    <option value="fox">{loc.foxLabel}</option>
+                </select>
+            </div>
         </div>
 
         {/* Messages */}

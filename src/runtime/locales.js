@@ -58,12 +58,17 @@ export const getLocaleStrings = (language) => {
                 dur1w: "1 hafta",
                 dur1m: "1 ay",
                 dur3m: "3 ay",
-                dur6m: "6 ay",
-                dur1y: "1 yıl",
-                chatTitle: "Sohbet",
+                               chatTitle: "Sohbet",
                 advisorTitle: "Danışman",
                 clearChat: "Sohbeti temizle",
-                askAdvisor: "Danışmanınıza sorun..."
+                askAdvisor: "Danışmanınıza sorun...",
+                budgetLabel: "Bütçe",
+                budgetExceeded: "⚠️ Yetersiz Bütçe!",
+                tensionHeatmap: "Gerilim Isı Haritası",
+                advisorPersonality: "Danışman Kişiliği",
+                hawkLabel: "Şahin (Askeri/Agresif)",
+                doveLabel: "Güvercin (Diplomatik/Barışçıl)",
+                foxLabel: "Tilki (Pragmatik/Dengeci)"
             };
         case "Deutsch":
             return {
@@ -98,7 +103,14 @@ export const getLocaleStrings = (language) => {
                 chatTitle: "Chat",
                 advisorTitle: "Berater",
                 clearChat: "Chat leeren",
-                askAdvisor: "Fragen Sie Ihren Berater..."
+                askAdvisor: "Fragen Sie Ihren Berater...",
+                budgetLabel: "Budget",
+                budgetExceeded: "⚠️ Budget Exceeded!",
+                tensionHeatmap: "Tension Heatmap",
+                advisorPersonality: "Beraterpersönlichkeit",
+                hawkLabel: "Falke (Militärisch/Aggressiv)",
+                doveLabel: "Taube (Diplomatisch/Friedlich)",
+                foxLabel: "Fuchs (Pragmatisch/Opportunistisch)"
             };
         case "Français":
             return {
@@ -118,7 +130,7 @@ export const getLocaleStrings = (language) => {
                 autoJump: "Avancer jusqu'à un événement important",
                 eventsTitle: "Événements",
                 historyTitle: "Chronologie",
-                jumpDesc: "Avancez rapidement le temps sur une période définie.",
+                jumpDesc: "Avancez rapidement le temps sur une pèriode définie.",
                 loadingTimeline: "Calcul de la chronologie...",
                 noEvents: "Aucun événement n'a encore été enregistré.",
                 noEventChain: "Aucune chaîne d'événements n'est encore disponible.",
@@ -133,7 +145,14 @@ export const getLocaleStrings = (language) => {
                 chatTitle: "Chat",
                 advisorTitle: "Conseiller",
                 clearChat: "Effacer le chat",
-                askAdvisor: "Demandez à votre conseiller..."
+                askAdvisor: "Demandez à votre conseiller...",
+                budgetLabel: "Budget",
+                budgetExceeded: "⚠️ Budget Exceeded!",
+                tensionHeatmap: "Tension Heatmap",
+                advisorPersonality: "Personnalité du conseiller",
+                hawkLabel: "Faucon (Militaire/Agressif)",
+                doveLabel: "Colombe (Diplomatique/Pacifique)",
+                foxLabel: "Renard (Pragmatique/Opportuniste)"
             };
         case "Español":
             return {
@@ -168,7 +187,14 @@ export const getLocaleStrings = (language) => {
                 chatTitle: "Chat",
                 advisorTitle: "Asesor",
                 clearChat: "Borrar chat",
-                askAdvisor: "Pregúntale a tu asesor..."
+                askAdvisor: "Pregúntale a tu asesor...",
+                budgetLabel: "Budget",
+                budgetExceeded: "⚠️ Budget Exceeded!",
+                tensionHeatmap: "Tension Heatmap",
+                advisorPersonality: "Personalidad del asesor",
+                hawkLabel: "Halcón (Militar/Agresivo)",
+                doveLabel: "Paloma (Diplomático/Pacífico)",
+                foxLabel: "Zorro (Pragmático/Oportunista)"
             };
         case "English":
         default:
@@ -204,7 +230,14 @@ export const getLocaleStrings = (language) => {
                 chatTitle: "Chat",
                 advisorTitle: "Advisor",
                 clearChat: "Clear chat",
-                askAdvisor: "Ask your advisor..."
+                askAdvisor: "Ask your advisor...",
+                budgetLabel: "Budget",
+                budgetExceeded: "⚠️ Budget Exceeded!",
+                tensionHeatmap: "Tension Heatmap",
+                advisorPersonality: "Advisor Personality",
+                hawkLabel: "Hawk (Military/Aggressive)",
+                doveLabel: "Dove (Diplomatic/Peaceful)",
+                foxLabel: "Fox (Pragmatic/Opportunistic)"
             };
     }
 };

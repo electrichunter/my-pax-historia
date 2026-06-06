@@ -1,7 +1,7 @@
 import React from "react";
 import dayjs from "dayjs";
 import advancedFormat from "dayjs/plugin/advancedFormat";
-import { JSON_URLS, readJson } from "../../runtime/assets.js";
+import { JSON_URLS, readJson, loadRegionCatalog, loadCountryNames } from "../../runtime/assets.js";
 import { generateActionSuggestions, refinePlayerAction } from "../AI/gameplay.js";
 import {
     buildActionDisplayText,
@@ -14,6 +14,44 @@ import { getLocaleStrings, useLocale } from "../../runtime/locales.js";
 dayjs.extend(advancedFormat);
 
 const ACTIONS_SPINNER_STYLE_ID = "actions-spinner-style";
+
+export const playSynthSound = (type) => {
+    if (typeof window === "undefined" || (!window.AudioContext && !window.webkitAudioContext)) return;
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        if (type === "tick") {
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(800, ctx.currentTime);
+            gain.gain.setValueAtTime(0.1, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.08);
+        } else if (type === "reveal") {
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(523.25, ctx.currentTime);
+            osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.1);
+            gain.gain.setValueAtTime(0.15, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.5);
+        } else if (type === "submit") {
+            osc.type = "triangle";
+            osc.frequency.setValueAtTime(220, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.15);
+            gain.gain.setValueAtTime(0.12, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.2);
+        }
+    } catch (e) {
+        console.warn("Audio error:", e);
+    }
+};
 
 const ensureSpinnerStyles = () => {
     if (typeof document === "undefined" || document.getElementById(ACTIONS_SPINNER_STYLE_ID)) {
@@ -213,6 +251,15 @@ const SuggestionCard = ({ topic, onQueue, queuedActionIds }) => (
     </div>
 );
 
+const calculateActionCost = (action) => {
+    const text = (action.text || action.title || "").toLowerCase();
+    if (action.kind === "chat") return 10;
+    if (text.includes("savaş") || text.includes("attack") || text.includes("ordu") || text.includes("sınır") || text.includes("asker") || text.includes("military") || text.includes("force")) {
+        return 30;
+    }
+    return 15;
+};
+
 const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
     const [actions, setActions] = React.useState([]);
     const [inputValue, setInputValue] = React.useState("");
@@ -225,6 +272,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
     const [isImproving, setIsImproving] = React.useState(false);
     const [isSuggesting, setIsSuggesting] = React.useState(false);
     const [language, setLanguage] = React.useState("English");
+    const [budgetLimit, setBudgetLimit] = React.useState(100);
     const inputRef = React.useRef(null);
     const loc = getLocaleStrings(language);
 
@@ -277,6 +325,45 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
         };
     }, [isOpen]);
 
+    React.useEffect(() => {
+        if (!isOpen) return;
+
+        Promise.all([
+            loadRegionCatalog(),
+            loadCountryNames(),
+            readJson(JSON_URLS.world, { defaultValue: {} })
+        ]).then(([regionCatalog, countryCatalog, worldState]) => {
+            const playerCode = countryCatalog.find(c => c.name.toLowerCase() === country.toLowerCase() || c.code.toLowerCase() === country.toLowerCase())?.code;
+            if (!playerCode) return;
+
+            const regionsOwned = regionCatalog.filter(region => {
+                const owner = worldState.regionOwnershipOverrides?.[region.id] || region.countryCode || "US";
+                return owner.toLowerCase() === playerCode.toLowerCase();
+            });
+
+            const pins = worldState.mapPins || [];
+            const industriesOwned = pins.filter(pin => {
+                if (pin.type !== "industry") return false;
+                const reg = regionCatalog.find(r => r.id === pin.regionId);
+                if (!reg) return false;
+                const owner = worldState.regionOwnershipOverrides?.[reg.id] || reg.countryCode || "US";
+                return owner.toLowerCase() === playerCode.toLowerCase();
+            });
+
+            readJson(JSON_URLS.game, { defaultValue: {} }).then((gameData) => {
+                const diff = gameData.difficulty || "standard";
+                let multiplier = 1.0;
+                if (diff === "easy") multiplier = 1.3;
+                else if (diff === "hard") multiplier = 0.8;
+                else if (diff === "nightmare" || diff === "kabus") multiplier = 0.5;
+
+                const rawBudget = (regionsOwned.length * 5) + (industriesOwned.length * 15);
+                const total = Math.max(50, Math.round(rawBudget * multiplier));
+                setBudgetLimit(total);
+            });
+        }).catch(console.error);
+    }, [isOpen, country, actions]);
+
     const persistActions = async (nextActions) => {
         setActions(nextActions);
         try {
@@ -291,11 +378,15 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
         actions
         .map((action, index) => ({
             normalized: normalizeActionEntry(action, index),
-                                 originalIndex: index,
+            originalIndex: index,
         }))
         .filter(({ normalized }) => normalized?.status === "planned"),
-                                           [actions],
+        [actions],
     );
+
+    const budgetUsed = React.useMemo(() => {
+        return submittedActions.reduce((sum, act) => sum + calculateActionCost(act.normalized), 0);
+    }, [submittedActions]);
 
     const handleSubmit = async () => {
         const trimmed = inputValue.trim();
@@ -312,6 +403,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
         try {
             await persistActions([...actions, nextAction]);
             setInputValue("");
+            playSynthSound("submit");
         } finally {
             setIsSubmitting(false);
         }
@@ -348,6 +440,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
 
         setQueuedActionIds((prev) => new Set(prev).add(action.id));
         await persistActions([...actions, queuedAction]);
+        playSynthSound("submit");
     };
 
     const refreshSuggestions = async () => {
@@ -414,7 +507,23 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
             padding: "1rem 1.25rem 0.75rem",
         }}
         >
-        <span style={{ fontSize: "1rem", fontWeight: 700, letterSpacing: "0.01em" }}>{loc.actionsTitle}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            <span style={{ fontSize: "1rem", fontWeight: 700, letterSpacing: "0.01em" }}>{loc.actionsTitle}</span>
+            <div
+            style={{
+                backgroundColor: budgetUsed > budgetLimit ? "rgba(239, 68, 68, 0.2)" : "rgba(16, 185, 129, 0.15)",
+                border: budgetUsed > budgetLimit ? "1px solid rgba(239, 68, 68, 0.5)" : "1px solid rgba(16, 185, 129, 0.4)",
+                borderRadius: "12px",
+                color: budgetUsed > budgetLimit ? "#f87171" : "#34d399",
+                fontSize: "0.74rem",
+                fontWeight: "bold",
+                padding: "0.22rem 0.65rem",
+                transition: "all 0.2s ease",
+            }}
+            >
+            💰 {loc.budgetLabel}: {budgetUsed}/{budgetLimit}
+            </div>
+        </div>
         <button
         type="button"
         onClick={onClose}
@@ -487,10 +596,10 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
         onClick={refreshSuggestions}
         style={{
             alignItems: "center",
-            background: "rgba(255,255,255,0.05)",
-            border: "1px solid rgba(255,255,255,0.12)",
+            background: isSuggesting ? "rgba(16,185,129,0.2)" : (hasRequestedSuggestions || suggestions.length > 0 ? "rgba(16,185,129,0.08)" : "rgba(255,255,255,0.05)"),
+            border: isSuggesting ? "1px solid rgba(16,185,129,0.5)" : (hasRequestedSuggestions || suggestions.length > 0 ? "1px solid rgba(16,185,129,0.3)" : "1px solid rgba(255,255,255,0.12)"),
             borderRadius: "10px",
-            color: "rgba(255,255,255,0.82)",
+            color: isSuggesting || hasRequestedSuggestions || suggestions.length > 0 ? "#34d399" : "rgba(255,255,255,0.82)",
             cursor: "pointer",
             display: "flex",
             fontSize: "0.8rem",
@@ -501,15 +610,23 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
             width: "100%",
         }}
         onMouseEnter={(event) => {
-            event.currentTarget.style.background = "rgba(255,255,255,0.09)";
-            event.currentTarget.style.borderColor = "rgba(255,255,255,0.18)";
+            if (!isSuggesting && !hasRequestedSuggestions && suggestions.length === 0) {
+                event.currentTarget.style.background = "rgba(255,255,255,0.09)";
+                event.currentTarget.style.borderColor = "rgba(255,255,255,0.18)";
+            } else if (!isSuggesting) {
+                event.currentTarget.style.background = "rgba(16,185,129,0.15)";
+            }
         }}
         onMouseLeave={(event) => {
-            event.currentTarget.style.background = "rgba(255,255,255,0.05)";
-            event.currentTarget.style.borderColor = "rgba(255,255,255,0.12)";
+            if (!isSuggesting && !hasRequestedSuggestions && suggestions.length === 0) {
+                event.currentTarget.style.background = "rgba(255,255,255,0.05)";
+                event.currentTarget.style.borderColor = "rgba(255,255,255,0.12)";
+            } else if (!isSuggesting) {
+                event.currentTarget.style.background = "rgba(16,185,129,0.08)";
+            }
         }}
         >
-        {isSuggesting && <SpinnerRing size={14} />}
+        {isSuggesting && <SpinnerRing size={14} tone="#34d399" />}
         <span>{suggestButtonText}</span>
         </button>
 
@@ -565,98 +682,105 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
 
         <div
         style={{
-            alignItems: "center",
             backgroundColor: "rgba(0,0,0,0.2)",
             borderTop: "1px solid rgba(255,255,255,0.07)",
             display: "flex",
+            flexDirection: "column",
             gap: "0.5rem",
             padding: "0.75rem 1rem",
         }}
         >
-        <div style={{ alignItems: "center", display: "flex", flex: 1, position: "relative" }}>
-        <input
-        ref={inputRef}
-        type="text"
-        placeholder={loc.enterAction}
-        value={inputValue}
-        onChange={(event) => setInputValue(event.target.value)}
-        onKeyDown={handleKeyDown}
-        style={{
-            background: "rgba(0,0,0,0.2)",
-            border: "1px solid rgba(255,255,255,0.15)",
-            borderRadius: "10px",
-            boxSizing: "border-box",
-            color: "white",
-            fontFamily: "sans-serif",
-            fontSize: "0.82rem",
-            outline: "none",
-            padding: "0.55rem 2.8rem 0.55rem 0.85rem",
-            transition: "border-color 0.2s",
-            width: "100%",
-        }}
-        onFocus={(event) => {
-            event.target.style.borderColor = "rgba(139,92,246,0.5)";
-        }}
-        onBlur={(event) => {
-            event.target.style.borderColor = "rgba(255,255,255,0.12)";
-        }}
-        />
-        <button
-        type="button"
-        onClick={handleImprove}
-        title="Improve action text"
-        aria-label="Improve action text"
-        style={{
-            alignItems: "center",
-            background: "none",
-            border: "none",
-            borderRadius: "8px",
-            color: inputValue.trim() ? "rgba(196,165,255,0.78)" : "rgba(196,165,255,0.35)",
-            cursor: inputValue.trim() ? "pointer" : "default",
-            display: "flex",
-            height: "1.8rem",
-            justifyContent: "center",
-            padding: 0,
-            position: "absolute",
-            right: "0.45rem",
-            width: "1.8rem",
-        }}
-        >
-        {isImproving ? <SpinnerRing size={14} tone="rgba(196,165,255,0.9)" /> : <SparkleIcon />}
-        </button>
-        </div>
+        {budgetUsed > budgetLimit && (
+            <div style={{ color: "#f87171", fontSize: "0.74rem", fontWeight: "bold", textAlign: "center", width: "100%", paddingBottom: "0.25rem" }}>
+                {loc.budgetExceeded}
+            </div>
+        )}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", width: "100%" }}>
+            <div style={{ alignItems: "center", display: "flex", flex: 1, position: "relative" }}>
+            <input
+            ref={inputRef}
+            type="text"
+            placeholder={loc.enterAction}
+            value={inputValue}
+            onChange={(event) => setInputValue(event.target.value)}
+            onKeyDown={handleKeyDown}
+            style={{
+                background: "rgba(0,0,0,0.2)",
+                border: "1px solid rgba(255,255,255,0.15)",
+                borderRadius: "10px",
+                boxSizing: "border-box",
+                color: "white",
+                fontFamily: "sans-serif",
+                fontSize: "0.82rem",
+                outline: "none",
+                padding: "0.55rem 2.8rem 0.55rem 0.85rem",
+                transition: "border-color 0.2s",
+                width: "100%",
+            }}
+            onFocus={(event) => {
+                event.target.style.borderColor = "rgba(139,92,246,0.5)";
+            }}
+            onBlur={(event) => {
+                event.target.style.borderColor = "rgba(255,255,255,0.12)";
+            }}
+            />
+            <button
+            type="button"
+            onClick={handleImprove}
+            title="Improve action text"
+            aria-label="Improve action text"
+            style={{
+                alignItems: "center",
+                background: "none",
+                border: "none",
+                borderRadius: "8px",
+                color: inputValue.trim() ? "rgba(196,165,255,0.78)" : "rgba(196,165,255,0.35)",
+                cursor: inputValue.trim() ? "pointer" : "default",
+                display: "flex",
+                height: "1.8rem",
+                justifyContent: "center",
+                padding: 0,
+                position: "absolute",
+                right: "0.45rem",
+                width: "1.8rem",
+            }}
+            >
+            {isImproving ? <SpinnerRing size={14} tone="rgba(196,165,255,0.9)" /> : <SparkleIcon />}
+            </button>
+            </div>
 
-        <button
-        type="button"
-        onClick={handleSubmit}
-        disabled={!inputValue.trim() || isSubmitting || isImproving}
-        style={{
-            alignItems: "center",
-            background: inputValue.trim() && !isSubmitting && !isImproving ? "#3b82f6" : "rgba(59,130,246,0.3)",
-            border: "none",
-            borderRadius: "10px",
-            color: "white",
-            cursor: inputValue.trim() && !isSubmitting && !isImproving ? "pointer" : "not-allowed",
-            display: "flex",
-            flexShrink: 0,
-            height: "2.2rem",
-            justifyContent: "center",
-            transition: "background 0.15s",
-            width: "2.2rem",
-        }}
-        onMouseEnter={(event) => {
-            if (inputValue.trim() && !isSubmitting && !isImproving) {
-                event.currentTarget.style.background = "#2563eb";
-            }
-        }}
-        onMouseLeave={(event) => {
-            if (inputValue.trim() && !isSubmitting && !isImproving) {
-                event.currentTarget.style.background = "#3b82f6";
-            }
-        }}
-        >
-        {isSubmitting ? <SpinnerRing size={14} /> : <SendIcon />}
-        </button>
+            <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!inputValue.trim() || isSubmitting || isImproving}
+            style={{
+                alignItems: "center",
+                background: inputValue.trim() && !isSubmitting && !isImproving ? "#3b82f6" : "rgba(59,130,246,0.3)",
+                border: "none",
+                borderRadius: "10px",
+                color: "white",
+                cursor: inputValue.trim() && !isSubmitting && !isImproving ? "pointer" : "not-allowed",
+                display: "flex",
+                flexShrink: 0,
+                height: "2.2rem",
+                justifyContent: "center",
+                transition: "background 0.15s",
+                width: "2.2rem",
+            }}
+            onMouseEnter={(event) => {
+                if (inputValue.trim() && !isSubmitting && !isImproving) {
+                    event.currentTarget.style.background = "#2563eb";
+                }
+            }}
+            onMouseLeave={(event) => {
+                if (inputValue.trim() && !isSubmitting && !isImproving) {
+                    event.currentTarget.style.background = "#3b82f6";
+                }
+            }}
+            >
+            {isSubmitting ? <SpinnerRing size={14} /> : <SendIcon />}
+            </button>
+        </div>
         </div>
         </div>
     );

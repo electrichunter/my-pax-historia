@@ -32,6 +32,8 @@ import {
   writeGameData,
   writeWorldState,
 } from "../../runtime/gameState.js";
+import { SimEngine } from "../../Simulation/SimEngine.js";
+import { AgentOrchestrator } from "./Agents/index.js";
 
 const CHAT_HINT_PATTERNS = [
   /\bchat\b/i,
@@ -257,6 +259,12 @@ const buildWorldSummary = async (bundle) => {
     ? `Active catalyst: ${activeCatalyst.title || "untitled"} - ${activeCatalyst.premise || activeCatalyst.opening || ""}`
     : "No active catalyst scene.";
 
+  const relations = bundle.world.relations || {};
+  const relationsList = Object.entries(relations)
+      .map(([code, score]) => `${code}: ${score >= 0 ? '+' : ''}${score}`)
+      .join(", ");
+  const relationsText = relationsList ? `Geopolitical relations with other countries (on scale of -100 to +100): ${relationsList}` : "";
+
   return [
     `Player polity: ${bundle.game.country || "Unknown polity"}`,
     `Current round: ${bundle.game.round}`,
@@ -266,6 +274,7 @@ const buildWorldSummary = async (bundle) => {
       return `${lang} (CRITICAL: All generated text, dialogue, events, titles, and descriptions MUST be exclusively in ${lang})`;
     })()}`,
     `Difficulty: ${bundle.game.difficulty || "standard"}`,
+    relationsText,
     "",
     "Territorial changes from the base scenario:",
     territorySummary,
@@ -274,7 +283,7 @@ const buildWorldSummary = async (bundle) => {
     politySummary,
     "",
     catalystSummary,
-  ].join("\n");
+  ].filter((x) => typeof x === "string").join("\n");
 };
 
 const formatDateReadable = (value) => {
@@ -609,7 +618,7 @@ const fallbackActionSuggestions = async (bundle) => {
         kind: "action",
         source: "suggested",
         text: isTr
-          ? `${recentTitle || topic.title.toLowerCase()} konusuna yönelik somut bir emir verin ve ilgili bir bakanlık veya komuta kademesini görevlendirin.`
+          ? `${recentTitle || topic.title.toLowerCase()} konusunda somut bir adım atın ve ilgili kurumları harekete geçirin.`
           : `Issue a concrete order addressing ${recentTitle || topic.title.toLowerCase()} and assign a responsible ministry or command.`,
         title: recentTitle
           ? isTr ? `Şuna yanıt ver: ${recentTitle}` : `Respond to ${recentTitle}`
@@ -619,7 +628,7 @@ const fallbackActionSuggestions = async (bundle) => {
         kind: "action",
         source: "suggested",
         text: isTr
-          ? `Bu hamlenin direniş tetiklemesi durumunda ${bundle.game.country || "devleti"} koruyacak ikinci dereceden bir önlem hazırlayın.`
+          ? `Bu hamlenin direniş tetiklemesi ihtimaline karşı ${bundle.game.country || "devlet"} için bir acil durum planı veya ikincil önlem paketi hazırlayın.`
           : `Prepare a second-order measure that protects ${bundle.game.country || "the polity"} if this line of effort triggers resistance.`,
         title: isTr ? "Bir acil durum planı oluştur" : "Create a contingency layer",
       }),
@@ -724,156 +733,14 @@ const buildGeneratedChat = async (chatLike, linkEventId, world) => {
 const fallbackJumpSimulation = async ({ bundle, days, mode, targetDate }) => {
   const isTr = bundle.game.language === "Türkçe";
   const plannedActions = normalizeActions(bundle.actions).filter((action) => action.status === "planned");
-  const events = [];
 
   const regionCatalog = await loadRegionCatalog();
   const countryCatalog = await loadCountryNames();
-  const currentOverrides = { ...(bundle.world?.regionOwnershipOverrides || {}) };
 
-  // 1. Process all planned actions
-  if (plannedActions.length > 0) {
-    plannedActions.forEach((action, index) => {
-      const eventDate = dayjs(bundle.game.gameDate)
-        .add(Math.max(1, Math.round(((index + 1) / (plannedActions.length + 1)) * Math.max(days, 1))), "day")
-        .format("YYYY-MM-DD");
+  const engine = new SimEngine(bundle, regionCatalog, countryCatalog);
+  const events = await engine.processDeterministicJump(days, plannedActions, isTr);
 
-      events.push({
-        date: eventDate,
-        description:
-          action.kind === "chat"
-            ? isTr
-              ? `${bundle.game.country}, ${action.title.toLowerCase()} konusunda niyet okumak yerine tarafları masaya oturmaya zorlayarak kasıtlı bir diplomatik kanal açıyor.`
-              : `${bundle.game.country} opens a deliberate diplomatic channel tied to ${action.title.toLowerCase()}, forcing counterparts to weigh terms instead of guessing intent.`
-            : isTr
-              ? `${bundle.game.country}, ${action.title.toLowerCase()} için uygulamaya geçiyor; bu durum diğer güçlerin de dikkatini çeken ani idari ve siyasi sonuçlar doğuruyor.`
-              : `${bundle.game.country} begins implementing ${action.title.toLowerCase()}, producing immediate administrative and political consequences that other powers start to notice.`,
-        impacts: {
-          createdChats:
-            action.kind === "chat" && action.invitees.length > 0 && action.chatStarter
-              ? [
-                  {
-                    countries: action.invitees,
-                    openingMessage: action.chatStarter,
-                    speaker: bundle.game.country,
-                    title: action.title,
-                  },
-                ]
-              : [],
-          polityChanges: [],
-          regionTransfers: [],
-        },
-        importance: "minor",
-        kind: action.kind === "chat" ? "diplomacy" : "player",
-        notable: false,
-        playerRelated: true,
-        title:
-          action.kind === "chat"
-            ? isTr
-              ? `${bundle.game.country} diplomatik bir kanal açıyor`
-              : `${bundle.game.country} opens a diplomatic channel`
-            : isTr
-              ? `${bundle.game.country}, ${action.title.toLowerCase()} üzerine harekete geçiyor`
-              : `${bundle.game.country} acts on ${action.title.toLowerCase()}`,
-      });
-    });
-  }
-
-  // 2. Pad with dynamic events if total count is under 4
-  const targetCount = Math.max(4, plannedActions.length);
-  while (events.length < targetCount) {
-    const eventIndex = events.length;
-    const eventDate = dayjs(bundle.game.gameDate)
-      .add(Math.max(1, Math.round(((eventIndex + 1) / (targetCount + 1)) * Math.max(days, 1))), "day")
-      .format("YYYY-MM-DD");
-
-    if (regionCatalog.length > 0 && countryCatalog.length >= 2 && Math.random() < 0.7) {
-      // Choose a random region
-      const region = regionCatalog[Math.floor(Math.random() * regionCatalog.length)];
-      const regionId = region.id;
-      const regionName = region.name;
-      const defaultOwnerCode = region.countryCode || "US";
-
-      // Resolve current owner
-      const currentOwnerCode = currentOverrides[regionId] || defaultOwnerCode;
-      const currentOwner = countryCatalog.find((c) => c.code === currentOwnerCode);
-      const currentOwnerName = currentOwner ? currentOwner.name : currentOwnerCode;
-
-      // Choose a random new owner
-      let newOwner = countryCatalog[Math.floor(Math.random() * countryCatalog.length)];
-      let attempts = 0;
-      while (newOwner && newOwner.code === currentOwnerCode && attempts < 10) {
-        newOwner = countryCatalog[Math.floor(Math.random() * countryCatalog.length)];
-        attempts++;
-      }
-
-      if (newOwner && newOwner.code !== currentOwnerCode) {
-        const newOwnerCode = newOwner.code;
-        const newOwnerName = newOwner.name;
-
-        events.push({
-          date: eventDate,
-          description: isTr
-            ? `Bölgesel gerilimlerin ve yapılan müzakerelerin ardından, daha önce ${currentOwnerName} idaresinde olan ${regionName} bölgesi resmen ${newOwnerName} kontrolüne geçti.`
-            : `Following intense regional negotiations, the territory of ${regionName}, previously governed by ${currentOwnerName}, has formally transitioned to the administration of ${newOwnerName}.`,
-          impacts: {
-            createdChats: [],
-            polityChanges: [],
-            regionTransfers: [
-              {
-                regionId,
-                regionName,
-                toCode: newOwnerCode,
-              },
-            ],
-          },
-          importance: "minor",
-          kind: "world",
-          notable: false,
-          playerRelated: false,
-          title: isTr
-            ? `${newOwnerName}, ${regionName} bölgesini devraldı`
-            : `${newOwnerName} assumes control of ${regionName}`,
-        });
-
-        currentOverrides[regionId] = newOwnerCode;
-        continue;
-      }
-    }
-
-    // Fallback/alternative to diplomatic/alliance event
-    if (countryCatalog.length >= 2) {
-      const countryA = countryCatalog[Math.floor(Math.random() * countryCatalog.length)];
-      let countryB = countryCatalog[Math.floor(Math.random() * countryCatalog.length)];
-      let attempts = 0;
-      while (countryB && countryB.code === countryA.code && attempts < 10) {
-        countryB = countryCatalog[Math.floor(Math.random() * countryCatalog.length)];
-        attempts++;
-      }
-
-      if (countryA && countryB && countryA.code !== countryB.code) {
-        events.push({
-          date: eventDate,
-          description: isTr
-            ? `${countryA.name} ve ${countryB.name} temsilcileri, ticari engelleri azaltmak ve sınır güvenliğini artırmak amacıyla yeni bir işbirliği protokolü imzaladı.`
-            : `Representatives from ${countryA.name} and ${countryB.name} signed a new cooperative agreement aimed at reducing trade barriers and aligning border security frameworks.`,
-          impacts: {
-            createdChats: [],
-            polityChanges: [],
-            regionTransfers: [],
-          },
-          importance: "minor",
-          kind: "diplomacy",
-          notable: false,
-          playerRelated: false,
-          title: isTr
-            ? `${countryA.name} ve ${countryB.name} arasında anlaşma`
-            : `${countryA.name} and ${countryB.name} reach pact`,
-        });
-      }
-    }
-  }
-
-  // 3. Mark the last event as major/notable
+  // Mark the last event as major/notable
   if (events.length > 0) {
     const lastIdx = events.length - 1;
     events[lastIdx].importance = "major";
@@ -920,6 +787,113 @@ const normalizeGeneratedEvent = (entry, index = 0) => {
     ...normalized,
     id: normalized.id || `generated-event-${index}`,
   };
+};
+
+const updateRelationsAndTensions = (world, plannedActions, generatedEvents, countryCatalog, regionCatalog, playerCountry, difficulty) => {
+  const nextWorld = { ...world };
+  const playerCode = countryCatalog.find(c => c.name.toLowerCase() === playerCountry.toLowerCase() || c.code.toLowerCase() === playerCountry.toLowerCase())?.code || "TR";
+
+  // 1. Initialize relations if empty
+  const relations = { ...(nextWorld.relations || {}) };
+  if (Object.keys(relations).length === 0) {
+    for (const c of countryCatalog) {
+      if (c.code !== playerCode) {
+        let baseRel = 10;
+        if (difficulty === "hard") baseRel = -10;
+        else if (difficulty === "nightmare" || difficulty === "kabus") baseRel = -25;
+        relations[c.code] = Math.floor(Math.random() * 31) - 15 + baseRel;
+      }
+    }
+  }
+
+  // 2. Initialize tensions if empty
+  const tensions = { ...(nextWorld.tensions || {}) };
+  if (Object.keys(tensions).length === 0) {
+    for (const r of regionCatalog) {
+      tensions[r.id] = Math.floor(Math.random() * 20) + 10;
+    }
+  }
+
+  // 3. Process action impacts on relations
+  for (const action of plannedActions) {
+    const text = (action.text || "").toLowerCase();
+    
+    if (action.kind === "chat" && action.invitees && action.invitees.length > 0) {
+      for (const invitee of action.invitees) {
+        const inviteeCode = invitee.code || invitee;
+        if (inviteeCode && relations[inviteeCode] !== undefined) {
+          relations[inviteeCode] = Math.min(100, relations[inviteeCode] + 8);
+        }
+      }
+    }
+
+    if (text.includes("trade") || text.includes("ticaret") || text.includes("ittifak") || text.includes("alliance") || text.includes("anlaşma") || text.includes("treaty")) {
+      for (const c of countryCatalog) {
+        if (c.code !== playerCode && (text.includes(c.name.toLowerCase()) || text.includes(c.code.toLowerCase()))) {
+          relations[c.code] = Math.min(100, relations[c.code] + 12);
+        }
+      }
+    }
+
+    if (text.includes("savaş") || text.includes("attack") || text.includes("ordu") || text.includes("sınır") || text.includes("asker") || text.includes("military") || text.includes("operation")) {
+      for (const c of countryCatalog) {
+        if (c.code !== playerCode && (text.includes(c.name.toLowerCase()) || text.includes(c.code.toLowerCase()))) {
+          relations[c.code] = Math.max(-100, relations[c.code] - 15);
+        }
+      }
+    }
+  }
+
+  // 4. Process event impacts on relations and tensions
+  for (const event of generatedEvents) {
+    const kind = event.kind || "world";
+    const desc = (event.description || "").toLowerCase();
+    
+    if (event.impacts?.regionTransfers?.length > 0) {
+      for (const transfer of event.impacts.regionTransfers) {
+        const from = transfer.fromCode;
+        const to = transfer.toCode;
+        
+        if (transfer.regionId) {
+          tensions[transfer.regionId] = Math.min(100, (tensions[transfer.regionId] || 15) + 50);
+        }
+
+        if (from === playerCode && relations[to] !== undefined) {
+          relations[to] = Math.max(-100, relations[to] - 25);
+        } else if (to === playerCode && relations[from] !== undefined) {
+          relations[from] = Math.max(-100, relations[from] - 30);
+        }
+      }
+    }
+
+    if (kind === "military" || kind === "disaster" || desc.includes("tension") || desc.includes("kriz") || desc.includes("gerginlik") || desc.includes("çatışma") || desc.includes("tehdit")) {
+      if (event.regionId && tensions[event.regionId] !== undefined) {
+        tensions[event.regionId] = Math.min(100, tensions[event.regionId] + 30);
+      }
+    } else {
+      if (event.regionId && tensions[event.regionId] !== undefined) {
+        tensions[event.regionId] = Math.max(10, tensions[event.regionId] - 15);
+      }
+    }
+
+    for (const c of countryCatalog) {
+      if (c.code !== playerCode && desc.includes(c.name.toLowerCase())) {
+        if (desc.includes("cooperation") || desc.includes("anlaşma") || desc.includes("işbirliği") || desc.includes("protocol") || desc.includes("destek")) {
+          relations[c.code] = Math.min(100, relations[c.code] + 10);
+        } else if (desc.includes("gerilim") || desc.includes("tepki") || desc.includes("conflict") || desc.includes("protest") || desc.includes("tehdit")) {
+          relations[c.code] = Math.max(-100, relations[c.code] - 12);
+        }
+      }
+    }
+  }
+
+  for (const rid of Object.keys(tensions)) {
+    tensions[rid] = Math.max(10, Math.round(tensions[rid] * 0.9));
+  }
+
+  nextWorld.relations = relations;
+  nextWorld.tensions = tensions;
+  return nextWorld;
 };
 
 const applySimulationResult = async ({
@@ -987,13 +961,23 @@ const applySimulationResult = async ({
     },
   });
 
+  const nextWorldWithUpdates = updateRelationsAndTensions(
+    worldWithImpacts,
+    plannedActionSnapshot,
+    generatedEvents,
+    countryCatalog,
+    regionCatalog,
+    baseGame.country || "Turkey",
+    baseGame.difficulty || "standard"
+  );
+
   await Promise.all([
     writeActionsState(nextActions),
     writeChatsState(nextChats),
     writeEventsState(nextEvents),
     writeGameData(nextGame),
     writeJson(JSON_URLS.colors, nextColors, { pretty: true }),
-    writeWorldState(worldWithImpacts),
+    writeWorldState(nextWorldWithUpdates),
   ]);
 
   return {
@@ -1002,7 +986,7 @@ const applySimulationResult = async ({
     colors: nextColors,
     events: nextEvents,
     game: nextGame,
-    world: worldWithImpacts,
+    world: nextWorldWithUpdates,
   };
 };
 
@@ -1282,15 +1266,24 @@ export const simulateTimelineJump = async ({ days, mode = "jump" } = {}) => {
   const safeDays = Math.max(1, Math.trunc(Number(days) || 0));
   const targetDate = dayjs(bundle.game.gameDate).add(safeDays, "day").format("YYYY-MM-DD");
   const variables = await buildTemplateVariables(bundle, { targetDate });
-  const payload = await runJsonTask(mode === "auto" ? "autoJumpForward" : "jumpForward", {
-    fallback: () => fallbackJumpSimulation({ bundle, days: safeDays, mode, targetDate }),
-    timeoutMs: 45000,
-    userMessage:
-      mode === "auto"
-        ? "Simulate an auto-jump and stop at the next notable or player-relevant event. Return JSON only."
-        : "Simulate a standard jump forward to the requested target date. Return JSON only.",
-    variables,
-  });
+
+  let payload = null;
+  const timeoutMs = 60000;
+  
+  try {
+    const orchestrator = new AgentOrchestrator();
+    payload = await withTimeout(
+        orchestrator.orchestrate(variables),
+        timeoutMs,
+        "Agent orchestrator timed out."
+    );
+  } catch (err) {
+    console.warn("Agent orchestrator failed:", err);
+  }
+
+  if (!payload || !payload.events) {
+    payload = await fallbackJumpSimulation({ bundle, days: safeDays, mode, targetDate });
+  }
 
   const result = {
     catalyst: payload?.catalyst ?? null,

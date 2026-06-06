@@ -17,6 +17,8 @@ import {
     readGameData,
     readWorldState,
 } from "../../runtime/gameState.js";
+import { playSynthSound } from "./actions.jsx";
+import { extractMapPins } from "../../Simulation/EventExtractor.js";
 
 dayjs.extend(advancedFormat);
 
@@ -73,6 +75,33 @@ const ensureTimelineStyles = () => {
         background: rgba(15,23,42,0.55);
         border-radius: 4px;
         padding: 0.05rem 0.32rem;
+    }
+
+    .newspaper-markdown p {
+        margin: 0 0 0.6rem 0;
+        text-indent: 1.5em;
+    }
+    .newspaper-markdown p:first-of-type {
+        text-indent: 0;
+    }
+    .newspaper-markdown p:first-of-type::first-letter {
+        float: left;
+        font-size: 2.2rem;
+        line-height: 1.7rem;
+        padding-top: 2px;
+        padding-right: 6px;
+        padding-left: 2px;
+        font-weight: bold;
+        color: #2c2416;
+        font-family: Georgia, serif;
+    }
+    .newspaper-markdown strong {
+        color: #000;
+        font-weight: bold;
+    }
+    .newspaper-markdown em {
+        color: #333;
+        font-style: italic;
     }
     `;
     document.head.appendChild(style);
@@ -531,46 +560,11 @@ const getActiveOverrides = (allEvents, revealedEventIds, defaultWorldState, regi
         // Dynamic pin & army extraction for revealed events
         const text = `${event.title || ""} ${event.description || ""}`.toLowerCase();
 
-        let targetRegion = null;
-        if (regionCatalog) {
-            for (const region of regionCatalog) {
-                if (region.name && text.includes(region.name.toLowerCase())) {
-                    targetRegion = region;
-                    break;
-                }
-            }
-        }
-
-        if (!targetRegion && impacts.regionTransfers?.length > 0) {
-            const regionId = impacts.regionTransfers[0].regionId;
-            targetRegion = regionCatalog?.find((r) => r.id === regionId);
-        }
-
-        const isIndustry = text.includes("sanayi") || text.includes("fabrika") || text.includes("endüstri") || text.includes("industry") || text.includes("factory") || text.includes("üretim tesis");
-        const isWarehouse = text.includes("depo") || text.includes("antrepo") || text.includes("lojistik") || text.includes("warehouse") || text.includes("depot") || text.includes("saklama alan");
-
-        if (targetRegion) {
-            const regionId = targetRegion.id;
-            if (isIndustry) {
-                const pinId = `pin-industry-${regionId}`;
-                if (!mapPins.some((p) => p.id === pinId)) {
-                    mapPins.push({
-                        id: pinId,
-                        name: isTr ? `${targetRegion.name} Sanayi Bölgesi` : `${targetRegion.name} Industrial Zone`,
-                        type: "industry",
-                        regionId,
-                    });
-                }
-            } else if (isWarehouse) {
-                const pinId = `pin-warehouse-${regionId}`;
-                if (!mapPins.some((p) => p.id === pinId)) {
-                    mapPins.push({
-                        id: pinId,
-                        name: isTr ? `${targetRegion.name} Depo Alanı` : `${targetRegion.name} Warehouse Depot`,
-                        type: "warehouse",
-                        regionId,
-                    });
-                }
+        // Extracted detailed pins from helper module
+        const extractedPins = extractMapPins(event, regionCatalog, isTr);
+        for (const pin of extractedPins) {
+            if (!mapPins.some((p) => p.id === pin.id)) {
+                mapPins.push(pin);
             }
         }
 
@@ -618,7 +612,7 @@ const getActiveOverrides = (allEvents, revealedEventIds, defaultWorldState, regi
 
 const getMapInstance = (mapRef) => mapRef?.current?.getMap?.() ?? mapRef?.current ?? null;
 
-const focusMapOnBounds = (mapRef, bounds) => {
+const focusMapOnBounds = (mapRef, bounds, maxZoom = 6.8) => {
     const map = getMapInstance(mapRef);
     if (!map || !bounds) {
         return;
@@ -627,13 +621,15 @@ const focusMapOnBounds = (mapRef, bounds) => {
     let [[west, south], [east, north]] = bounds;
 
     if (Math.abs(east - west) < 0.35) {
-        west -= 0.6;
-        east += 0.6;
+        const delta = maxZoom > 7.5 ? 0.25 : 0.6;
+        west -= delta;
+        east += delta;
     }
 
     if (Math.abs(north - south) < 0.35) {
-        south -= 0.45;
-        north += 0.45;
+        const delta = maxZoom > 7.5 ? 0.16 : 0.45;
+        south -= delta;
+        north += delta;
     }
 
     map.fitBounds(
@@ -644,7 +640,7 @@ const focusMapOnBounds = (mapRef, bounds) => {
         {
             duration: 1800,
             essential: true,
-            maxZoom: 6.8,
+            maxZoom,
             padding: 80,
         },
     );
@@ -784,9 +780,26 @@ const ghostButtonStyle = {
     transition: "all 0.15s ease",
 };
 
-const EventCard = ({ event, footer = null, lookups }) => {
+const EventCard = ({ event, footer = null, lookups, loc }) => {
     const tags = collectEventTags(event, lookups);
     const mapChangeCount = getEventMapChangeCount(event);
+    const isTr = loc?.code === "tr";
+    const isClassified = event.classified || 
+        event.kind === "intelligence" || 
+        (event.title && (
+            event.title.toLowerCase().includes("istihbarat") ||
+            event.title.toLowerCase().includes("ajan") ||
+            event.title.toLowerCase().includes("gizli") ||
+            event.title.toLowerCase().includes("intelligence") ||
+            event.title.toLowerCase().includes("secret") ||
+            event.title.toLowerCase().includes("spy")
+        )) ||
+        (event.description && (
+            event.description.toLowerCase().includes("casus") ||
+            event.description.toLowerCase().includes("sızma") ||
+            event.description.toLowerCase().includes("sabotaj") ||
+            event.description.toLowerCase().includes("clandestine")
+        ));
 
     return (
         <div
@@ -812,6 +825,11 @@ const EventCard = ({ event, footer = null, lookups }) => {
         <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
         <MetricPill icon={<CalendarIcon />} tone="default">
         {formatDate(event.date)}
+        </MetricPill>
+        <MetricPill tone={isClassified ? "violet" : "accent"} icon={isClassified ? "🕵️" : "📰"}>
+        {isClassified 
+            ? (isTr ? "Gizli / Ajan" : "Classified / Spy") 
+            : (isTr ? "Haber" : "Public News")}
         </MetricPill>
         {mapChangeCount > 0 && (
             <MetricPill icon={<MapIcon />} tone="accent">
@@ -842,6 +860,52 @@ const EventCard = ({ event, footer = null, lookups }) => {
 
         {footer}
         </div>
+        </div>
+    );
+};
+
+const NewspaperHeadline = ({ event, loc }) => {
+    if (!event) return null;
+    return (
+        <div style={{
+            background: "#fbf8f0",
+            backgroundImage: "radial-gradient(rgba(0,0,0,0.015) 1px, transparent 0), radial-gradient(rgba(0,0,0,0.015) 1px, transparent 0)",
+            backgroundSize: "8px 8px",
+            backgroundPosition: "0 0, 4px 4px",
+            border: "4px double #2c2416",
+            borderRadius: "4px",
+            color: "#1c140a",
+            padding: "1.25rem",
+            fontFamily: "'Georgia', 'Times New Roman', serif",
+            boxShadow: "0 10px 20px rgba(0,0,0,0.35), inset 0 0 40px rgba(0,0,0,0.04)",
+            margin: "1rem 0",
+            transform: "rotate(-1deg)",
+            transition: "transform 0.3s ease",
+            cursor: "default"
+        }}
+        onMouseEnter={(e) => e.currentTarget.style.transform = "rotate(0deg) scale(1.02)"}
+        onMouseLeave={(e) => e.currentTarget.style.transform = "rotate(-1deg)"}
+        >
+            <div style={{ textAlign: "center", borderBottom: "2px solid #2c2416", paddingBottom: "0.5rem", marginBottom: "0.75rem" }}>
+                <div style={{ fontSize: "1.6rem", fontWeight: "900", letterSpacing: "1px", textTransform: "uppercase", fontFamily: "Georgia, serif", color: "#1c140a" }}>
+                    {loc.code === "tr" ? "GÜNLÜK HAVADİS" : "THE DAILY CHRONICLE"}
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.65rem", textTransform: "uppercase", fontWeight: "bold", borderTop: "1px solid #2c2416", paddingTop: "0.25rem", marginTop: "0.25rem", color: "#4a3b2c" }}>
+                    <span>{formatDate(event.date)}</span>
+                    <span>* {loc.code === "tr" ? "FİLİ HAKİKAT" : "DIVERTED HISTORY"} *</span>
+                    <span>10 CENTS</span>
+                </div>
+            </div>
+
+            <h1 style={{ margin: "0.5rem 0 0.75rem", fontSize: "1.2rem", fontWeight: "900", lineHeight: "1.25", textTransform: "uppercase", textAlign: "center", borderBottom: "1px dashed #c4b69d", paddingBottom: "0.5rem", color: "#1c140a", fontFamily: "Georgia, serif" }}>
+                {event.title}
+            </h1>
+
+            {event.description && (
+                <div className="newspaper-markdown" style={{ fontSize: "0.8rem", lineHeight: "1.5", textAlign: "justify", color: "#2c2416" }}>
+                    <ReactMarkdown>{event.description}</ReactMarkdown>
+                </div>
+            )}
         </div>
     );
 };
@@ -1086,18 +1150,21 @@ const TimelineSkipPanel = ({
             <div
             style={{
                 alignItems: "center",
-                background: "rgba(255,255,255,0.04)",
-                       border: "1px solid rgba(255,255,255,0.08)",
-                       borderRadius: "12px",
-                       color: "rgba(255,255,255,0.75)",
-                       display: "flex",
-                       fontSize: "0.76rem",
-                       gap: "0.55rem",
-                       justifyContent: "center",
-                       padding: "0.68rem 0.8rem",
+                background: "rgba(109,40,217,0.15)",
+                border: "1px solid rgba(139,92,246,0.3)",
+                borderRadius: "12px",
+                color: "rgba(196,165,255,0.95)",
+                display: "flex",
+                fontSize: "0.85rem",
+                fontWeight: 600,
+                gap: "0.6rem",
+                justifyContent: "center",
+                padding: "0.85rem 1rem",
+                marginTop: "0.5rem",
             }}
             >
-            <SpinnerRing size={15} />
+            <SpinnerRing size={16} tone="rgba(196,165,255,0.95)" />
+            <span>{loc.code === "tr" ? "Olaylar Hazırlanıyor... (Lütfen bekleyin)" : loc.loadingTimeline}</span>
             </div>
         )}
 
@@ -1174,6 +1241,7 @@ const TimelineHistoryPanel = ({
                     <EventCard
                     event={event}
                     lookups={lookups}
+                    loc={loc}
                     footer={(
                         hasMapChanges ? (
                             <div style={{ display: "flex", justifyContent: "center", marginTop: "0.15rem" }}>
@@ -1209,6 +1277,56 @@ const TimelineHistoryPanel = ({
                 <span>{loc.revealNext}</span>
                 </button>
             )}
+            {!hasMoreEvents && record && record.events && record.events.length > 0 && (
+                (() => {
+                    const notableEvent = record.events.find(e => {
+                        const isClassified = e.classified || e.kind === "intelligence" || 
+                            (e.title && (e.title.toLowerCase().includes("istihbarat") || e.title.toLowerCase().includes("gizli"))) ||
+                            (e.description && (e.description.toLowerCase().includes("casus") || e.description.toLowerCase().includes("sızma")));
+                        return !isClassified && (e.notable || String(e.importance).toLowerCase() === "major");
+                    }) || record.events.find(e => {
+                        const isClassified = e.classified || e.kind === "intelligence" || 
+                            (e.title && (e.title.toLowerCase().includes("istihbarat") || e.title.toLowerCase().includes("gizli")));
+                        return !isClassified;
+                    }) || record.events[0];
+                    
+                    const isNotableClassified = notableEvent.classified || notableEvent.kind === "intelligence" || 
+                        (notableEvent.title && (notableEvent.title.toLowerCase().includes("istihbarat") || notableEvent.title.toLowerCase().includes("gizli"))) ||
+                        (notableEvent.description && (notableEvent.description.toLowerCase().includes("casus") || notableEvent.description.toLowerCase().includes("sızma")));
+
+                    if (!isNotableClassified) {
+                        return <NewspaperHeadline event={notableEvent} loc={loc} />;
+                    } else {
+                        return (
+                            <div style={{
+                                background: "#111625",
+                                border: "2px dashed #f59e0b",
+                                borderRadius: "10px",
+                                color: "#fef3c7",
+                                padding: "1.25rem",
+                                fontFamily: "sans-serif",
+                                boxShadow: "0 10px 20px rgba(0,0,0,0.4), inset 0 0 15px rgba(245,158,11,0.05)",
+                                margin: "1rem 0",
+                                transform: "rotate(1deg)",
+                                transition: "transform 0.3s ease",
+                                cursor: "default"
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.transform = "rotate(0deg) scale(1.02)"}
+                            onMouseLeave={(e) => e.currentTarget.style.transform = "rotate(1deg)"}
+                            >
+                                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", borderBottom: "1px solid rgba(245,158,11,0.2)", paddingBottom: "0.5rem", marginBottom: "0.75rem" }}>
+                                    <span style={{ fontSize: "1.3rem" }}>🕵️</span>
+                                    <span style={{ fontWeight: "bold", fontSize: "0.78rem", color: "#f59e0b", letterSpacing: "1px", textTransform: "uppercase" }}>
+                                        {loc.code === "tr" ? "GİZLİ İSTİHBARAT RAPORU" : "CLASSIFIED DOSSIER"}
+                                    </span>
+                                </div>
+                                <h4 style={{ margin: "0 0 0.5rem 0", fontSize: "0.85rem", fontWeight: "bold", color: "white" }}>{notableEvent.title}</h4>
+                                <p style={{ margin: 0, fontSize: "0.78rem", lineHeight: "1.45", color: "rgba(255,255,255,0.7)" }}>{notableEvent.description}</p>
+                            </div>
+                        );
+                    }
+                })()
+            )}
             </div>
         )}
         </PanelChrome>
@@ -1239,6 +1357,20 @@ const DateWidget = ({
     useEffect(() => {
         ensureTimelineStyles();
     }, []);
+
+    useEffect(() => {
+        if (!isLoading) {
+            return;
+        }
+
+        playSynthSound("tick");
+
+        const interval = setInterval(() => {
+            playSynthSound("tick");
+        }, 1000);
+
+        return () => clearInterval(interval);
+    }, [isLoading]);
 
     useEffect(() => {
         let cancelled = false;
@@ -1340,9 +1472,14 @@ const DateWidget = ({
         setError("");
 
         try {
+            const startJumpTime = Date.now();
+            // Allow UI to render the loading state before the heavy synchronous simulation blocks the main thread
+            await new Promise((resolve) => setTimeout(resolve, 150));
+
             const result = mode === "auto"
             ? await simulateAutoJump({ days })
             : await simulateTimelineJump({ days });
+            
             setGameData(result.game);
             setEvents(result.events);
             setWorldState(result.world);
@@ -1397,7 +1534,23 @@ const DateWidget = ({
         }
 
         const bounds = getEventFocusBounds(activeVisibleEvent, { countryBounds, regionBounds, polityLookup });
-        focusMapOnBounds(mapRef, bounds);
+        
+        const text = `${activeVisibleEvent.title || ""} ${activeVisibleEvent.description || ""}`.toLowerCase();
+        const isLocalized = text.includes("sanayi") || text.includes("fabrika") || text.includes("depo") || text.includes("üs") || text.includes("üretim") || text.includes("factory") || text.includes("base") || text.includes("warehouse");
+        const zoomLevel = isLocalized ? 8.8 : 6.8;
+
+        focusMapOnBounds(mapRef, bounds, zoomLevel);
+
+        const regionId = activeVisibleEvent?.impacts?.regionTransfers?.[0]?.regionId || null;
+        const kind = activeVisibleEvent?.kind || "world";
+        const pulseEvent = new CustomEvent("map-event-pulse", {
+            detail: {
+                regionId,
+                kind,
+                event: activeVisibleEvent
+            }
+        });
+        window.dispatchEvent(pulseEvent);
     }, [activeVisibleEvent, countryBounds, mapRef, regionBounds, polityLookup]);
 
     useEffect(() => {
@@ -1420,13 +1573,20 @@ const DateWidget = ({
                 return 1;
             }
 
-            return Math.min(totalEvents, current + 1);
+            const nextCount = Math.min(totalEvents, current + 1);
+            if (nextCount > current) {
+                playSynthSound("reveal");
+            }
+            return nextCount;
         });
     };
 
     const focusEvent = (event) => {
         const bounds = getEventFocusBounds(event, { countryBounds, regionBounds, polityLookup });
-        focusMapOnBounds(mapRef, bounds);
+        const text = `${event?.title || ""} ${event?.description || ""}`.toLowerCase();
+        const isLocalized = text.includes("sanayi") || text.includes("fabrika") || text.includes("depo") || text.includes("üs") || text.includes("üretim") || text.includes("factory") || text.includes("base") || text.includes("warehouse");
+        const zoomLevel = isLocalized ? 8.8 : 6.8;
+        focusMapOnBounds(mapRef, bounds, zoomLevel);
     };
 
     return (

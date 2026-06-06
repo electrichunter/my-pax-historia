@@ -86,6 +86,15 @@ Chats: \${CHATS_NON_CONSOLIDATED_ROUNDS}
 
 Return JSON only in the same shape as jumpForward.
 
+OLAY KALİTE KURALLARI (EVENT QUALITY RULES):
+1. Her olayın açıklaması en az 2 cümle olmalı ve somut detaylar (şehir/ülke isimleri, rakamlar, tarihler) içermelidir.
+2. Olaylar arasında mantıklı bir NEDEN-SONUÇ zinciri olmalıdır.
+3. En az 1 olay oyuncu ülkesini doğrudan ilgilendirmeli ve reaksiyon gerektirmelidir.
+4. Olaylar en az 3 farklı kategoriden (askeri, ekonomik, diplomatik, iç siyaset, teknolojik, doğal afet) seçilmelidir.
+5. Her olay dünya güç dengelerini biraz değiştirmelidir.
+6. Önemli turlarda veya krizlerde, uygun olduğunda geçmiş gerçek dünya tarihindeki benzer olaylara (Tarihsel Karşılaştırma / Paralel) atıfta bulun.
+7. Önceki olaylarla çelişme.
+
 Stop early when the next event is strategically notable, directly relevant to the player, or a natural catalyst or diplomatic opening.`,
   catalystCreation: `You design an immersive catalyst scene for a strategy game.
 Player polity: \${PLAYER_POLITY}
@@ -173,6 +182,15 @@ Chats: \${CHATS_NON_CONSOLIDATED_ROUNDS}
 
 Return JSON only:
 {"summary":"","stopDate":"YYYY-MM-DD","clearActions":true,"events":[{"date":"YYYY-MM-DD","title":"","description":"","importance":"minor","kind":"world","playerRelated":false,"notable":false,"impacts":{"regionTransfers":[],"polityChanges":[],"createdChats":[]}}],"catalyst":{"title":"","premise":"","opening":"","choices":[]}}
+
+OLAY KALİTE KURALLARI (EVENT QUALITY RULES):
+1. Her olayın açıklaması en az 2 cümle olmalı ve somut detaylar (şehir/ülke isimleri, rakamlar, tarihler) içermelidir.
+2. Olaylar arasında mantıklı bir NEDEN-SONUÇ zinciri olmalıdır (örneğin askeri yığınak -> sınır gerginliği -> çatışma).
+3. En az 1 olay oyuncu ülkesini doğrudan ilgilendirmeli ve reaksiyon gerektirmelidir.
+4. Olaylar en az 3 farklı kategoriden (askeri, ekonomik, diplomatik, iç siyaset, teknolojik, doğal afet) seçilmelidir.
+5. Her olay dünya güç dengelerini biraz değiştirmelidir.
+6. Önemli turlarda veya krizlerde, uygun olduğunda geçmiş gerçek dünya tarihindeki benzer olaylara (Tarihsel Karşılaştırma / Paralel) atıfta bulun.
+7. Önceki olaylarla çelişme. Eğer 2 tur önce bir anlaşma imzalandıysa, şimdi aynı ülkelerle savaş çıkartma - önce anlaşmanın bozulma sürecini anlat.
 
 Generate 3-8 meaningful events, not filler. Never invent player actions the player did not order. Make the final event notable if it deserves immediate attention.`,
   nextSpeaker: `You choose the next speaker in an ongoing diplomatic chat.

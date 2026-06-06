@@ -5,6 +5,7 @@ import {
     getProviderMeta,
     providerSupportsModelDiscovery,
 } from "../AI/providerConfig.js";
+import { useLocale } from "../../runtime/locales.js";
 
 const baseStyle = {
     position: "fixed",
@@ -517,9 +518,11 @@ const SettingsMenu = ({
     isFullscreenEnabled,
     isGlobeEnabled,
     isTerrainEnabled,
+    isTensionHeatmapEnabled,
     onToggleFullscreen,
     onToggleGlobe,
     onToggleTerrain,
+    onToggleTensionHeatmap,
     apiProvider,
     onApiProviderChange,
     providerSettings,
@@ -528,6 +531,7 @@ const SettingsMenu = ({
     githubUrl,
 }) => {
     const selectedProvider = apiProvider ?? DEFAULT_PROVIDER;
+    const loc = useLocale();
 
     return (
         <div
@@ -572,6 +576,7 @@ const SettingsMenu = ({
         <Toggle label="Fullscreen" enabled={isFullscreenEnabled} onToggle={onToggleFullscreen} />
         <Toggle label="3D Globe" enabled={isGlobeEnabled} onToggle={onToggleGlobe} />
         <Toggle label="3D Terrain" enabled={isTerrainEnabled} onToggle={onToggleTerrain} />
+        <Toggle label={loc.tensionHeatmap || "Tension Heatmap"} enabled={isTensionHeatmapEnabled} onToggle={onToggleTensionHeatmap} />
 
         <SocialLinks discordUrl={discordUrl} githubUrl={githubUrl} />
         </div>

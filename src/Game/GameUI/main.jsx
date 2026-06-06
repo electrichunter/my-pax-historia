@@ -121,6 +121,25 @@ const Main = ({
 
   const [apiProvider, setApiProvider] = useState(() => getStoredProvider());
   const [providerSettings, setProviderSettings] = useState(() => loadProviderSettingsFormState());
+  const [isTensionHeatmapEnabled, setIsTensionHeatmapEnabled] = useState(() => {
+    try {
+      return localStorage.getItem("map-tension-heatmap") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const handleToggleTensionHeatmap = () => {
+    const nextState = !isTensionHeatmapEnabled;
+    setIsTensionHeatmapEnabled(nextState);
+    try {
+      localStorage.setItem("map-tension-heatmap", String(nextState));
+    } catch (e) {
+      console.error(e);
+    }
+    const event = new CustomEvent("map-tension-heatmap-toggle", { detail: { enabled: nextState } });
+    window.dispatchEvent(event);
+  };
 
   useEffect(() => {
     if (!checkWebGL()) setShowWebGLWarning(true);
@@ -223,6 +242,8 @@ const Main = ({
             setIsFullscreenEnabled(newState);
             toggleFullscreen(newState);
           }}
+          isTensionHeatmapEnabled={isTensionHeatmapEnabled}
+          onToggleTensionHeatmap={handleToggleTensionHeatmap}
           onToggleGlobe={() => setIsGlobeEnabled(!isGlobeEnabled)}
           onToggleTerrain={() => setIsTerrainEnabled(!isTerrainEnabled)}
           apiProvider={apiProvider}

@@ -4,9 +4,12 @@ import { onRegionSelected } from "../Selection/Regions";
 import {
   JSON_URLS,
   PMTILES_PROTOCOL_URLS,
+  PMTILES_ARCHIVES,
   ensurePmtilesProtocol,
   getNationColors,
   readJson,
+  getPmtilesArchive,
+  decodeVectorTile,
 } from "../../runtime/assets.js";
 import { loadCountryLabelCollections } from "../../runtime/countryLabels.js";
 
@@ -44,15 +47,202 @@ const fallbackColorFromCode = (code = "") => {
   return `rgb(${64 + a * 5}, ${64 + c * 5}, ${64 + b * 5})`;
 };
 
+const tilePointToLngLat = (px, py, extent = 4096) => {
+    const lng = (px / extent) * 360 - 180;
+    const latRad = Math.atan(Math.sinh(Math.PI * (1 - (2 * py) / extent)));
+    const lat = latRad * (180 / Math.PI);
+    return [lng, lat];
+};
+
+const extendBounds = (currentBounds, nextBounds) => {
+    if (!nextBounds) return currentBounds;
+    if (!currentBounds) return nextBounds;
+    return [
+        [
+            Math.min(currentBounds[0][0], nextBounds[0][0]),
+            Math.min(currentBounds[0][1], nextBounds[0][1]),
+        ],
+        [
+            Math.max(currentBounds[1][0], nextBounds[1][0]),
+            Math.max(currentBounds[1][1], nextBounds[1][1]),
+        ],
+    ];
+};
+
+const geometryToBounds = (geometry, extent = 4096) => {
+    let minLng = Number.POSITIVE_INFINITY;
+    let minLat = Number.POSITIVE_INFINITY;
+    let maxLng = Number.NEGATIVE_INFINITY;
+    let maxLat = Number.NEGATIVE_INFINITY;
+
+    for (const ring of geometry ?? []) {
+        for (const point of ring ?? []) {
+            const [lng, lat] = tilePointToLngLat(point.x, point.y, extent);
+            minLng = Math.min(minLng, lng);
+            minLat = Math.min(minLat, lat);
+            maxLng = Math.max(maxLng, lng);
+            maxLat = Math.max(maxLat, lat);
+        }
+    }
+
+    if (!Number.isFinite(minLng) || !Number.isFinite(minLat) || !Number.isFinite(maxLng) || !Number.isFinite(maxLat)) {
+        return null;
+    }
+
+    return [[minLng, minLat], [maxLng, maxLat]];
+};
+
+const loadFeatureBounds = async (archiveUrl, layerName, keyResolvers) => {
+    const pmtiles = getPmtilesArchive(archiveUrl);
+    const tileData = await pmtiles.getZxy(0, 0, 0);
+    if (!tileData?.data) return new Map();
+
+    const tile = await decodeVectorTile(tileData.data);
+    const layer = tile.layers[layerName];
+    if (!layer) return new Map();
+
+    const extent = layer.extent || 4096;
+    const boundsLookup = new Map();
+
+    for (let index = 0; index < layer.length; index += 1) {
+        const feature = layer.feature(index);
+        const props = feature.properties ?? {};
+        const key = keyResolvers
+        .map((resolver) => resolver(props))
+        .find((candidate) => candidate != null && String(candidate).trim() !== "");
+
+        if (!key) continue;
+
+        const featureBounds = geometryToBounds(feature.loadGeometry(), extent);
+        if (!featureBounds) continue;
+
+        const normalizedKey = String(key);
+        boundsLookup.set(
+            normalizedKey,
+            extendBounds(boundsLookup.get(normalizedKey) || null, featureBounds),
+        );
+    }
+
+    return boundsLookup;
+};
+
+let regionBoundsPromise = null;
+const loadRegionBounds = async () => {
+    if (!regionBoundsPromise) {
+        regionBoundsPromise = loadFeatureBounds(
+            PMTILES_ARCHIVES.regions,
+            "regions",
+            [
+                (props) => props?.GID_1,
+                (props) => props?.gid_1,
+                (props) => props?.HASC_1,
+                (props) => props?.fid,
+            ],
+        );
+    }
+    return regionBoundsPromise;
+};
+
 const WorldMap = () => {
   const { current: map } = useMap();
+  const countriesUrl = PMTILES_PROTOCOL_URLS.countries;
+  const regionsUrl = PMTILES_PROTOCOL_URLS.regions;
   const [colorMap, setColorMap] = useState({});
   const [worldState, setWorldState] = useState({ regionOwnershipOverrides: {} });
   const [timelineOverrides, setTimelineOverrides] = useState(null);
   const [pointLabelData, setPointLabelData] = useState(EMPTY_FEATURE_COLLECTION);
   const [curvedLabelData, setCurvedLabelData] = useState(EMPTY_FEATURE_COLLECTION);
-  const countriesUrl = PMTILES_PROTOCOL_URLS.countries;
-  const regionsUrl = PMTILES_PROTOCOL_URLS.regions;
+  const [isTensionHeatmapEnabled, setIsTensionHeatmapEnabled] = useState(() => {
+    try {
+      return localStorage.getItem("map-tension-heatmap") === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [pulses, setPulses] = useState([]);
+
+  useEffect(() => {
+    const styleId = "map-pulse-styles";
+    if (!document.getElementById(styleId)) {
+        const style = document.createElement("style");
+        style.id = styleId;
+        style.textContent = `
+            @keyframes map-ping {
+                0% { transform: scale(0.2); opacity: 0.9; }
+                80% { opacity: 0.35; }
+                100% { transform: scale(3.5); opacity: 0; }
+            }
+            .map-pulse-marker {
+                width: 20px;
+                height: 20px;
+                border-radius: 50%;
+                position: relative;
+                pointer-events: none;
+            }
+            .map-pulse-marker::after {
+                content: '';
+                position: absolute;
+                inset: -10px;
+                border-radius: 50%;
+                animation: map-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+            }
+            .map-pulse-marker.military {
+                background: rgba(239, 68, 68, 0.65);
+                border: 2px solid #ef4444;
+            }
+            .map-pulse-marker.military::after {
+                box-shadow: 0 0 10px #ef4444;
+                border: 2px solid #ef4444;
+            }
+            .map-pulse-marker.diplomatic {
+                background: rgba(16, 185, 129, 0.65);
+                border: 2px solid #10b981;
+            }
+            .map-pulse-marker.diplomatic::after {
+                box-shadow: 0 0 10px #10b981;
+                border: 2px solid #10b981;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleTensionToggle = (event) => {
+      setIsTensionHeatmapEnabled(event.detail.enabled);
+    };
+    const handlePulse = async (e) => {
+      const { regionId, kind } = e.detail;
+      if (!regionId) return;
+
+      try {
+        const rBounds = await loadRegionBounds();
+        const bounds = rBounds.get(regionId);
+        if (bounds) {
+          const lng = (bounds[0][0] + bounds[1][0]) / 2;
+          const lat = (bounds[0][1] + bounds[1][1]) / 2;
+          const pulseId = `pulse-${Date.now()}-${Math.random()}`;
+
+          setPulses((prev) => [...prev, { id: pulseId, lng, lat, kind }]);
+
+          setTimeout(() => {
+            setPulses((prev) => prev.filter((p) => p.id !== pulseId));
+          }, 6000);
+        }
+      } catch (err) {
+        console.error("Pulse error in Nations.jsx:", err);
+      }
+    };
+
+    window.addEventListener("map-tension-heatmap-toggle", handleTensionToggle);
+    window.addEventListener("map-event-pulse", handlePulse);
+    
+    return () => {
+      window.removeEventListener("map-tension-heatmap-toggle", handleTensionToggle);
+      window.removeEventListener("map-event-pulse", handlePulse);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -137,6 +327,35 @@ const WorldMap = () => {
   }, []);
 
   const fillStyle = useMemo(() => {
+    if (isTensionHeatmapEnabled) {
+      const tensionStops = [];
+      const tensions = activeWorldState?.tensions || {};
+      
+      for (const [regionId, score] of Object.entries(tensions)) {
+        let color = "rgba(16, 185, 129, 0.22)"; // Green for safe / low tension
+        if (score > 50) {
+          color = "rgba(239, 68, 68, 0.65)"; // Red for high tension
+        } else if (score > 20) {
+          color = "rgba(245, 158, 11, 0.45)"; // Orange/Yellow for moderate tension
+        }
+        tensionStops.push(regionId, color);
+      }
+      
+      const fallbackColor = "rgba(16, 185, 129, 0.22)";
+      
+      return {
+        "fill-color": tensionStops.length > 0
+          ? [
+            "match",
+            ["get", "GID_1"],
+            ...tensionStops,
+            fallbackColor
+          ]
+          : fallbackColor,
+        "fill-opacity": 0.75,
+      };
+    }
+
     const resolvedColorMap = { ...colorMap };
     for (const [code, override] of Object.entries(activeWorldState?.polityOverrides ?? {})) {
       if (override?.color) {
@@ -176,7 +395,7 @@ const WorldMap = () => {
         : fallback,
       "fill-opacity": 0.66,
     };
-  }, [colorMap, activeWorldState]);
+  }, [colorMap, activeWorldState, isTensionHeatmapEnabled]);
 
   const pointLabelLayerLayout = useMemo(() => ({
     "text-field": ["get", "name"],
@@ -342,6 +561,12 @@ const WorldMap = () => {
       {resolvedPins.map((pin) => (
         <AnimatedMarker key={pin.id} pin={pin} />
       ))}
+
+      {pulses.map((p) => (
+        <Marker key={p.id} longitude={p.lng} latitude={p.lat} anchor="center">
+          <div className={`map-pulse-marker ${p.kind === "military" || p.kind === "war" ? "military" : "diplomatic"}`} />
+        </Marker>
+      ))}
     </>
   );
 };
@@ -389,6 +614,10 @@ const AnimatedMarker = ({ pin }) => {
     industry: "🏭",
     warehouse: "📦",
     army: "🪖",
+    milbase: "🛡️",
+    naval: "⚓",
+    airbase: "✈️",
+    research: "🧪",
   };
   const emoji = emojiMap[pin.type] || "📍";
 
@@ -398,7 +627,7 @@ const AnimatedMarker = ({ pin }) => {
         style={{
           alignItems: "center",
           background: pin.type === "army" ? "rgba(220,38,38,0.95)" : "rgba(17,24,39,0.95)",
-          border: pin.type === "army" ? "2px solid #ef4444" : "1px solid rgba(255,255,255,0.25)",
+          border: pin.type === "army" ? "2px solid #ef4444" : pin.type === "milbase" ? "2px solid #f59e0b" : pin.type === "naval" ? "2px solid #38bdf8" : pin.type === "airbase" ? "2px solid #a78bfa" : pin.type === "research" ? "2px solid #ec4899" : "1px solid rgba(255,255,255,0.25)",
           borderRadius: "50%",
           boxShadow: "0 4px 12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.2)",
           cursor: "pointer",
@@ -421,17 +650,18 @@ const AnimatedMarker = ({ pin }) => {
         <span>{emoji}</span>
         <div
           style={{
-            background: "rgba(15,23,42,0.95)",
-            border: "1px solid rgba(255,255,255,0.15)",
-            borderRadius: "4px",
-            color: "white",
-            fontSize: "0.68rem",
+            background: pin.type === "milbase" ? "rgba(17, 22, 37, 0.96)" : pin.type === "industry" ? "rgba(10, 28, 22, 0.96)" : pin.type === "naval" ? "rgba(10, 20, 28, 0.96)" : pin.type === "airbase" ? "rgba(22, 10, 28, 0.96)" : pin.type === "research" ? "rgba(28, 10, 22, 0.96)" : "rgba(15,23,42,0.95)",
+            border: pin.type === "milbase" ? "1.5px solid #f59e0b" : pin.type === "industry" ? "1.5px solid #10b981" : pin.type === "naval" ? "1.5px solid #38bdf8" : pin.type === "airbase" ? "1.5px solid #a78bfa" : pin.type === "research" ? "1.5px solid #ec4899" : "1px solid rgba(255,255,255,0.15)",
+            borderRadius: "5px",
+            color: pin.type === "milbase" ? "#fef3c7" : pin.type === "naval" ? "#e0f2fe" : pin.type === "airbase" ? "#f5f3ff" : pin.type === "research" ? "#fce7f3" : "white",
+            fontSize: "0.7rem",
             fontWeight: "bold",
             marginTop: "0.25rem",
-            padding: "0.15rem 0.35rem",
+            padding: "0.2rem 0.45rem",
             position: "absolute",
             top: "100%",
             whiteSpace: "nowrap",
+            boxShadow: "0 4px 10px rgba(0,0,0,0.4)",
             zIndex: 10,
           }}
         >
