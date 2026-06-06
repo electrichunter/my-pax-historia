@@ -480,12 +480,19 @@ const normalizePolityOverride = (key, value) => {
     return null;
   }
 
+  const resources = value.resources || {};
   return {
     aliases: normalizeActionParticipants(value.aliases || value.additionalNames),
     code,
     color: normalizeOptionalString(value.color),
     name: normalizeOptionalString(value.name || value.label),
     note: normalizeOptionalString(value.note),
+    resources: {
+      politicalPower: typeof resources.politicalPower === "number" ? resources.politicalPower : 200,
+      stability: typeof resources.stability === "number" ? resources.stability : 80,
+      economicCapital: typeof resources.economicCapital === "number" ? resources.economicCapital : 100,
+      militaryCap: typeof resources.militaryCap === "number" ? resources.militaryCap : 50,
+    }
   };
 };
 

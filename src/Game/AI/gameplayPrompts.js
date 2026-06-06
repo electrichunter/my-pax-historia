@@ -84,7 +84,7 @@ Recent events: \${ALL_EVENTS_WITH_CONSOLIDATION_CATALYSTS}
 Planned actions: \${PLAYER_ACTIONS_THIS_ROUND}
 Chats: \${CHATS_NON_CONSOLIDATED_ROUNDS}
 
-Return JSON only in the same shape as jumpForward.
+Return JSON only in the same shape as jumpForward (including state_changes).
 
 OLAY KALİTE KURALLARI (EVENT QUALITY RULES):
 1. Her olayın açıklaması en az 2 cümle olmalı ve somut detaylar (şehir/ülke isimleri, rakamlar, tarihler) içermelidir.
@@ -94,8 +94,13 @@ OLAY KALİTE KURALLARI (EVENT QUALITY RULES):
 5. Her olay dünya güç dengelerini biraz değiştirmelidir.
 6. Önemli turlarda veya krizlerde, uygun olduğunda geçmiş gerçek dünya tarihindeki benzer olaylara (Tarihsel Karşılaştırma / Paralel) atıfta bulun.
 7. Önceki olaylarla çelişme.
+8. ROBOTİK METİN YASAĞI (NO ROBOTIC TEMPLATES): Kesinlikle "planı için uygulamaya geçiyor", "bu durum diğer güçlerin de dikkatini çeken ani idari ve siyasi sonuçlar doğuruyor", "hamlesini yapıyor" gibi kendini tekrarlayan yapay şablon cümleler KULLANMAYIN. Her olayın başlığı ve açıklaması tamamen özgün, sürükleyici, gerçekçi ve zengin detaylar içeren doğal bir dille yazılmalıdır. Dilbilgisi ve yazım kurallarına kesinlikle uyun.
 
-Stop early when the next event is strategically notable, directly relevant to the player, or a natural catalyst or diplomatic opening.`,
+Stop early when the next event is strategically notable, directly relevant to the player, or a natural catalyst or diplomatic opening.
+
+ACTION-FIRST RULE: If "Planned actions" is non-empty, the FIRST event in your list MUST directly narrate the beginning of the player's order and its immediate world consequences. playerRelated=true, notable=true, dated at or just after the Origin date.
+
+CRITICAL: You MUST output all map changes and relational impacts as structured JSON in the `state_changes` object.`,
   catalystCreation: `You design an immersive catalyst scene for a strategy game.
 Player polity: \${PLAYER_POLITY}
 Current date: \${RUNNING_CATALYST_DATE}
@@ -181,7 +186,7 @@ Planned actions: \${PLAYER_ACTIONS_THIS_ROUND}
 Chats: \${CHATS_NON_CONSOLIDATED_ROUNDS}
 
 Return JSON only:
-{"summary":"","stopDate":"YYYY-MM-DD","clearActions":true,"events":[{"date":"YYYY-MM-DD","title":"","description":"","importance":"minor","kind":"world","playerRelated":false,"notable":false,"impacts":{"regionTransfers":[],"polityChanges":[],"createdChats":[]}}],"catalyst":{"title":"","premise":"","opening":"","choices":[]}}
+{"summary":"","stopDate":"YYYY-MM-DD","clearActions":true,"events":[{"date":"YYYY-MM-DD","title":"","description":"","importance":"minor","kind":"world","playerRelated":false,"notable":false,"impacts":{"regionTransfers":[],"polityChanges":[],"createdChats":[]}}],"catalyst":{"title":"","premise":"","opening":"","choices":[]},"state_changes":{"relations":{"COUNTRYCODE_1":10,"COUNTRYCODE_2":-5},"tensions":{"region_id":15},"map_pins":[{"action":"add_or_remove","type":"milbase_or_industry","regionId":"","polityCode":""}]}}
 
 OLAY KALİTE KURALLARI (EVENT QUALITY RULES):
 1. Her olayın açıklaması en az 2 cümle olmalı ve somut detaylar (şehir/ülke isimleri, rakamlar, tarihler) içermelidir.
@@ -191,8 +196,13 @@ OLAY KALİTE KURALLARI (EVENT QUALITY RULES):
 5. Her olay dünya güç dengelerini biraz değiştirmelidir.
 6. Önemli turlarda veya krizlerde, uygun olduğunda geçmiş gerçek dünya tarihindeki benzer olaylara (Tarihsel Karşılaştırma / Paralel) atıfta bulun.
 7. Önceki olaylarla çelişme. Eğer 2 tur önce bir anlaşma imzalandıysa, şimdi aynı ülkelerle savaş çıkartma - önce anlaşmanın bozulma sürecini anlat.
+8. ROBOTİK METİN YASAĞI (NO ROBOTIC TEMPLATES): Kesinlikle "planı için uygulamaya geçiyor", "bu durum diğer güçlerin de dikkatini çeken ani idari ve siyasi sonuçlar doğuruyor", "hamlesini yapıyor" gibi kendini tekrarlayan yapay şablon cümleler KULLANMAYIN. Her olayın başlığı ve açıklaması tamamen özgün, sürükleyici, gerçekçi ve zengin detaylar içeren doğal bir dille yazılmalıdır. Dilbilgisi ve yazım kurallarına kesinlikle uyun.
 
-Generate 3-8 meaningful events, not filler. Never invent player actions the player did not order. Make the final event notable if it deserves immediate attention.`,
+Generate 3-15 meaningful events, not filler. Never invent player actions the player did not order. Make the final event notable if it deserves immediate attention.
+
+ACTION-FIRST RULE: If "Planned actions" is non-empty, the FIRST event in your list MUST directly narrate the beginning of the player's order and its immediate world consequences (reactions, mobilizations, first results). Do NOT skip or summarise this — it must be a vivid, specific event dated at or just after the Origin date, with playerRelated=true and notable=true.
+
+CRITICAL: You MUST output all map changes and relational impacts as structured JSON in the \`state_changes\` object. Do NOT rely on text parsing. If a military base is built or relations drop, it MUST be reflected in \`state_changes\`.`, 
   nextSpeaker: `You choose the next speaker in an ongoing diplomatic chat.
 Player polity: \${PLAYER_POLITY}
 Current date: \${ORIGIN_ROUND_DATE}

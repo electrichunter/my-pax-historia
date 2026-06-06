@@ -13,6 +13,7 @@ import { getLocaleStrings } from "../../runtime/locales.js";
 import { simulateAutoJump, simulateTimelineJump } from "../AI/gameplay.js";
 import {
     normalizeActions,
+    readActionsState,
     readEventsState,
     readGameData,
     readWorldState,
@@ -721,6 +722,11 @@ const MetricPill = ({ children, icon = null, tone = "default" }) => {
             border: "1px solid rgba(192,132,252,0.2)",
             color: "#e9d5ff",
         },
+        gold: {
+            background: "rgba(251,191,36,0.12)",
+            border: "1px solid rgba(251,191,36,0.25)",
+            color: "#fde68a",
+        },
     };
 
     const resolved = toneMap[tone] || toneMap.default;
@@ -784,7 +790,9 @@ const EventCard = ({ event, footer = null, lookups, loc }) => {
     const tags = collectEventTags(event, lookups);
     const mapChangeCount = getEventMapChangeCount(event);
     const isTr = loc?.code === "tr";
-    const isClassified = event.classified || 
+    const isPlayerOrder = event.kind === "player" || event.playerRelated === true && event.title?.startsWith("📋");
+    const isClassified = !isPlayerOrder && (
+        event.classified || 
         event.kind === "intelligence" || 
         (event.title && (
             event.title.toLowerCase().includes("istihbarat") ||
@@ -799,15 +807,26 @@ const EventCard = ({ event, footer = null, lookups, loc }) => {
             event.description.toLowerCase().includes("sızma") ||
             event.description.toLowerCase().includes("sabotaj") ||
             event.description.toLowerCase().includes("clandestine")
-        ));
+        ))
+    );
+
+    const cardBorder = isPlayerOrder
+        ? "1px solid rgba(251,191,36,0.45)"
+        : "1px solid rgba(255,255,255,0.08)";
+    const cardBg = isPlayerOrder
+        ? "linear-gradient(180deg, rgba(251,191,36,0.10), rgba(251,191,36,0.04))"
+        : "linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.03))";
+    const cardShadow = isPlayerOrder
+        ? "inset 0 1px 0 rgba(251,191,36,0.12), 0 0 18px rgba(251,191,36,0.07)"
+        : "inset 0 1px 0 rgba(255,255,255,0.03)";
 
     return (
         <div
         style={{
-            background: "linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.03))",
-            border: "1px solid rgba(255,255,255,0.08)",
+            background: cardBg,
+            border: cardBorder,
             borderRadius: "16px",
-            boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
+            boxShadow: cardShadow,
             overflow: "hidden",
         }}
         >
@@ -826,8 +845,13 @@ const EventCard = ({ event, footer = null, lookups, loc }) => {
         <MetricPill icon={<CalendarIcon />} tone="default">
         {formatDate(event.date)}
         </MetricPill>
-        <MetricPill tone={isClassified ? "violet" : "accent"} icon={isClassified ? "🕵️" : "📰"}>
-        {isClassified 
+        <MetricPill
+            tone={isPlayerOrder ? "gold" : isClassified ? "violet" : "accent"}
+            icon={isPlayerOrder ? "📋" : isClassified ? "🕵️" : "📰"}
+        >
+        {isPlayerOrder
+            ? (isTr ? "Oyuncu Emri" : "Player Order")
+            : isClassified 
             ? (isTr ? "Gizli / Ajan" : "Classified / Spy") 
             : (isTr ? "Haber" : "Public News")}
         </MetricPill>
@@ -1142,7 +1166,7 @@ const TimelineSkipPanel = ({
             width: "12.5rem",
         }}
         >
-        <div style={{ fontSize: "0.85rem", fontWeight: 700 }}>{loc.autoJump}</div>
+        <div style={{ fontSize: "0.85rem", fontWeight: 700 }}>{loc.code === "tr" ? "Dinamik Atla (Emre Göre)" : "Dynamic Jump"}</div>
         </button>
         </div>
 
@@ -1473,8 +1497,17 @@ const DateWidget = ({
 
         try {
             const startJumpTime = Date.now();
-            // Allow UI to render the loading state before the heavy synchronous simulation blocks the main thread
-            await new Promise((resolve) => setTimeout(resolve, 150));
+            
+            const actionsData = await readActionsState({ force: true });
+            const plannedActionsCount = normalizeActions(actionsData).filter((a) => a.status === "planned" && a.source === "manual").length;
+            
+            let delayMs = 150;
+            if (plannedActionsCount === 1) delayMs = 3000;
+            else if (plannedActionsCount === 2) delayMs = 3000;
+            else if (plannedActionsCount >= 3) delayMs = 5000;
+
+            // Allow UI to render the loading state and provide LLM API cooldown time
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
 
             const result = mode === "auto"
             ? await simulateAutoJump({ days })
@@ -1596,7 +1629,7 @@ const DateWidget = ({
         error={error}
         isLoading={isLoading}
         isOpen={openPanel === "skip"}
-        onAutoJump={() => runJump(365, "auto")}
+        onAutoJump={() => runJump(0, "auto")}
         onClose={() => setPanel(null)}
         onJump={(days) => runJump(days, "jump")}
         topOffset={topOffset}

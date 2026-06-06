@@ -48,7 +48,36 @@ export class DirectorAgent extends Agent {
     }
 
     buildPrompt(context, reports) {
-        return `${this.systemPrompt}\n\nCRITICAL CONSOLIDATION & QUALITY RULES:\n1. Synthesize the domain agent reports.\n2. Every event description must be at least 2 sentences and contain concrete details (names, cities, numbers, dates).\n3. Ensure the events are connected by a logical cause-and-effect chain.\n4. Span at least 3 categories (military, economic, diplomatic, internal politics, technological, natural disaster).\n5. When appropriate, draw historical parallels to real past events in description (Historical Comparison).\n6. Ensure continuity and avoid contradictions.\n7. Write exclusively in the requested language.\n\nLanguage: ${context.language || "English"}\n\nReports from Agents:\nMilitary: ${JSON.stringify(reports.military)}\nEconomy: ${JSON.stringify(reports.economy)}\nDiplomacy: ${JSON.stringify(reports.diplomacy)}\n\nState:\n${context.worldSummary || ""}\n\nReturn JSON only in this format:\n{"summary":"Overall narrative summary of the turn","stopDate":"YYYY-MM-DD","clearActions":true,"events":[{"date":"YYYY-MM-DD","title":"","description":"","importance":"minor","kind":"world","playerRelated":false,"notable":false,"impacts":{"regionTransfers":[],"polityChanges":[],"createdChats":[]}}],"catalyst":null}`;
+        return `${this.systemPrompt}\n\nCRITICAL CONSOLIDATION & QUALITY RULES:
+1. Synthesize the domain agent reports.
+2. Every event description must be at least 3-4 sentences and contain concrete details (names, cities, numbers, dates, institutions).
+3. Ensure the events are connected by a logical cause-and-effect chain.
+4. Span at least 3 categories (military, economic, diplomatic, internal politics, technological, natural disaster).
+5. When appropriate, draw historical parallels to real past events in description.
+6. Ensure continuity and avoid contradictions.
+7. Write exclusively in the requested language.
+
+ACTION-FIRST RULE: The FIRST event in your list MUST directly narrate the execution and ACTUAL CONSEQUENCES of the player's planned actions.
+- DO NOT use repetitive, robotic phrases like "hamlesini yapıyor", "uygulamaya geçiyor", or "sonuçlar doğuruyor".
+- DO NOT just say "the player enacted the order and it had consequences." 
+- YOU MUST INVENT THE SPECIFIC CONSEQUENCES! If the player says "balance the home front", describe new taxes in Ankara, police crackdowns on protests, or specific factory subsidies. Tell a rich, immersive story of WHAT HAPPENED when the order was given.
+
+CRITICAL: You MUST output all map changes and relational impacts as structured JSON in the \`state_changes\` object.
+
+Language: ${context.language || "English"}
+
+Reports from Agents:
+Military: ${JSON.stringify(reports.military)}
+Economy: ${JSON.stringify(reports.economy)}
+Diplomacy: ${JSON.stringify(reports.diplomacy)}
+
+Planned actions: ${context.plannedActions || "None"}
+
+State:
+${context.worldSummary || ""}
+
+Return JSON only in this format:
+{"summary":"Overall narrative summary of the turn","stopDate":"YYYY-MM-DD","clearActions":true,"events":[{"date":"YYYY-MM-DD","title":"","description":"","importance":"major","kind":"player","playerRelated":true,"notable":true,"impacts":{"regionTransfers":[],"polityChanges":[],"createdChats":[]}}],"catalyst":null,"state_changes":{"relations":{"COUNTRYCODE_1":10,"COUNTRYCODE_2":-5},"tensions":{"region_id":15},"map_pins":[{"action":"add_or_remove","type":"milbase_or_industry","regionId":"","polityCode":""}]}}`;
     }
 }
 

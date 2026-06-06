@@ -789,7 +789,7 @@ const normalizeGeneratedEvent = (entry, index = 0) => {
   };
 };
 
-const updateRelationsAndTensions = (world, plannedActions, generatedEvents, countryCatalog, regionCatalog, playerCountry, difficulty) => {
+const applyStateChanges = (world, result, countryCatalog, regionCatalog, playerCountry, difficulty) => {
   const nextWorld = { ...world };
   const playerCode = countryCatalog.find(c => c.name.toLowerCase() === playerCountry.toLowerCase() || c.code.toLowerCase() === playerCountry.toLowerCase())?.code || "TR";
 
@@ -814,79 +814,53 @@ const updateRelationsAndTensions = (world, plannedActions, generatedEvents, coun
     }
   }
 
-  // 3. Process action impacts on relations
-  for (const action of plannedActions) {
-    const text = (action.text || "").toLowerCase();
-    
-    if (action.kind === "chat" && action.invitees && action.invitees.length > 0) {
-      for (const invitee of action.invitees) {
-        const inviteeCode = invitee.code || invitee;
-        if (inviteeCode && relations[inviteeCode] !== undefined) {
-          relations[inviteeCode] = Math.min(100, relations[inviteeCode] + 8);
+  // 3. Process structured state_changes from LLM output
+  if (result && result.state_changes) {
+    const sc = result.state_changes;
+    if (sc.relations && typeof sc.relations === "object") {
+      for (const [key, value] of Object.entries(sc.relations)) {
+        if (relations[key] !== undefined && typeof value === "number") {
+          relations[key] = Math.max(-100, Math.min(100, relations[key] + value));
         }
       }
     }
-
-    if (text.includes("trade") || text.includes("ticaret") || text.includes("ittifak") || text.includes("alliance") || text.includes("anlaşma") || text.includes("treaty")) {
-      for (const c of countryCatalog) {
-        if (c.code !== playerCode && (text.includes(c.name.toLowerCase()) || text.includes(c.code.toLowerCase()))) {
-          relations[c.code] = Math.min(100, relations[c.code] + 12);
+    if (sc.tensions && typeof sc.tensions === "object") {
+      for (const [key, value] of Object.entries(sc.tensions)) {
+        if (typeof value === "number") {
+          tensions[key] = Math.max(0, Math.min(100, (tensions[key] || 15) + value));
         }
       }
     }
-
-    if (text.includes("savaş") || text.includes("attack") || text.includes("ordu") || text.includes("sınır") || text.includes("asker") || text.includes("military") || text.includes("operation")) {
-      for (const c of countryCatalog) {
-        if (c.code !== playerCode && (text.includes(c.name.toLowerCase()) || text.includes(c.code.toLowerCase()))) {
-          relations[c.code] = Math.max(-100, relations[c.code] - 15);
+    if (sc.map_pins && Array.isArray(sc.map_pins)) {
+      let currentPins = [...(nextWorld.mapPins || [])];
+      for (const pin of sc.map_pins) {
+        if (pin.action === "add" && pin.type && pin.regionId) {
+          const pinId = `pin-${pin.type}-${pin.regionId}-${Date.now()}`;
+          const isTr = (difficulty || "").toLowerCase().includes("tr") || (playerCountry || "").toLowerCase().includes("tür");
+          const typeNames = {
+            industry: isTr ? "Sanayi Bölgesi" : "Industrial Zone",
+            warehouse: isTr ? "Lojistik Merkezi" : "Logistics Center",
+            milbase: isTr ? "Askeri Garnizon" : "Military Garrison",
+            naval: isTr ? "Deniz Üssü" : "Naval Base",
+            airbase: isTr ? "Hava Üssü" : "Airbase",
+            research: isTr ? "Araştırma Laboratuvarı" : "Research Lab",
+          };
+          currentPins.push({
+            id: pinId,
+            name: typeNames[pin.type] || pin.type,
+            type: pin.type,
+            regionId: pin.regionId,
+            polityCode: pin.polityCode || playerCode
+          });
+        } else if (pin.action === "remove" && pin.type && pin.regionId) {
+          currentPins = currentPins.filter(p => !(p.type === pin.type && p.regionId === pin.regionId));
         }
       }
-    }
-  }
-
-  // 4. Process event impacts on relations and tensions
-  for (const event of generatedEvents) {
-    const kind = event.kind || "world";
-    const desc = (event.description || "").toLowerCase();
-    
-    if (event.impacts?.regionTransfers?.length > 0) {
-      for (const transfer of event.impacts.regionTransfers) {
-        const from = transfer.fromCode;
-        const to = transfer.toCode;
-        
-        if (transfer.regionId) {
-          tensions[transfer.regionId] = Math.min(100, (tensions[transfer.regionId] || 15) + 50);
-        }
-
-        if (from === playerCode && relations[to] !== undefined) {
-          relations[to] = Math.max(-100, relations[to] - 25);
-        } else if (to === playerCode && relations[from] !== undefined) {
-          relations[from] = Math.max(-100, relations[from] - 30);
-        }
-      }
-    }
-
-    if (kind === "military" || kind === "disaster" || desc.includes("tension") || desc.includes("kriz") || desc.includes("gerginlik") || desc.includes("çatışma") || desc.includes("tehdit")) {
-      if (event.regionId && tensions[event.regionId] !== undefined) {
-        tensions[event.regionId] = Math.min(100, tensions[event.regionId] + 30);
-      }
-    } else {
-      if (event.regionId && tensions[event.regionId] !== undefined) {
-        tensions[event.regionId] = Math.max(10, tensions[event.regionId] - 15);
-      }
-    }
-
-    for (const c of countryCatalog) {
-      if (c.code !== playerCode && desc.includes(c.name.toLowerCase())) {
-        if (desc.includes("cooperation") || desc.includes("anlaşma") || desc.includes("işbirliği") || desc.includes("protocol") || desc.includes("destek")) {
-          relations[c.code] = Math.min(100, relations[c.code] + 10);
-        } else if (desc.includes("gerilim") || desc.includes("tepki") || desc.includes("conflict") || desc.includes("protest") || desc.includes("tehdit")) {
-          relations[c.code] = Math.max(-100, relations[c.code] - 12);
-        }
-      }
+      nextWorld.mapPins = currentPins;
     }
   }
 
+  // Decay tensions slightly over time
   for (const rid of Object.keys(tensions)) {
     tensions[rid] = Math.max(10, Math.round(tensions[rid] * 0.9));
   }
@@ -907,6 +881,9 @@ const applySimulationResult = async ({
 }) => {
   const regionCatalog = await loadRegionCatalog();
   const countryCatalog = await loadCountryNames();
+  const plannedActionSnapshot = normalizeActions(baseActions).filter((action) => action.status === "planned");
+
+  // Removed the dummy 'action initiated' events so the simulation only shows actual LLM narrated consequences.
   const generatedEvents = normalizeArray(result.events)
     .map((entry, index) => normalizeGeneratedEvent(entry, index))
     .filter(Boolean);
@@ -916,7 +893,7 @@ const applySimulationResult = async ({
     gameDate: normalizeString(result.stopDate) || baseGame.gameDate,
     round: (baseGame.round || 1) + 1,
   });
-  const plannedActionSnapshot = normalizeActions(baseActions).filter((action) => action.status === "planned");
+  // plannedActionSnapshot already built above
   const nextActions = normalizeActions(baseActions).map((action) => ({
     ...action,
     status: action.status === "planned" && result.clearActions ? "resolved" : action.status,
@@ -961,10 +938,9 @@ const applySimulationResult = async ({
     },
   });
 
-  const nextWorldWithUpdates = updateRelationsAndTensions(
+  const nextWorldWithUpdates = applyStateChanges(
     worldWithImpacts,
-    plannedActionSnapshot,
-    generatedEvents,
+    result,
     countryCatalog,
     regionCatalog,
     baseGame.country || "Turkey",
@@ -1263,9 +1239,69 @@ export const advanceActiveCatalyst = async (choiceText) => {
 export const simulateTimelineJump = async ({ days, mode = "jump" } = {}) => {
   const bundle = await readGameStateBundle({ force: true });
   const baseColors = await readJson(JSON_URLS.colors, { defaultValue: {}, force: true });
-  const safeDays = Math.max(1, Math.trunc(Number(days) || 0));
+  let safeDays = Math.max(1, Math.trunc(Number(days) || 0));
+  
+  if (mode === "auto") {
+    const plannedActionsCount = normalizeActions(bundle.actions).filter((a) => a.status === "planned" && a.source === "manual").length;
+    safeDays = Math.max(30, plannedActionsCount * 25);
+  }
+  
   const targetDate = dayjs(bundle.game.gameDate).add(safeDays, "day").format("YYYY-MM-DD");
-  const variables = await buildTemplateVariables(bundle, { targetDate });
+  
+  const regionCatalog = await loadRegionCatalog();
+  const countryCatalog = await loadCountryNames();
+  const engine = new SimEngine(bundle, regionCatalog, countryCatalog);
+  
+  // 1. Auto-Consolidate History every 10 rounds to save LLM tokens
+  let currentEvents = bundle.events;
+  if (bundle.game.round > 0 && bundle.game.round % 10 === 0) {
+    console.log(`[Auto-Consolidate] Round ${bundle.game.round}: Compressing history...`);
+    try {
+      const summaryText = await consolidateRecentHistory({ limit: 15 });
+      if (summaryText) {
+        currentEvents = [
+          {
+            date: bundle.game.gameDate,
+            title: `Tarihçe Sıkıştırıldı (Tur ${bundle.game.round})`,
+            description: summaryText,
+            importance: "major",
+            kind: "world",
+            playerRelated: false,
+            notable: true,
+            impacts: { regionTransfers: [], polityChanges: [], createdChats: [] },
+            id: Date.now()
+          },
+          // Keep only the very last event for immediate context
+          ...bundle.events.slice(-1)
+        ];
+        // Instantly write to save state
+        await writeEventsState(currentEvents);
+      }
+    } catch (e) {
+      console.warn("Auto-consolidation failed:", e);
+    }
+  }
+
+  // 2. RUN DETERMINISTIC TICK (Economy, Player Action Deduction, AI Decision Trees)
+  const tickResult = engine.runDeterministicTick(bundle.actions);
+  const updatedBundle = {
+    ...bundle,
+    world: tickResult.nextWorld,
+    actions: tickResult.nextActions,
+    events: [
+      ...currentEvents,
+      // Inject mechanical tick events (like AI decisions, Riots) into the history for LLM to see
+      ...tickResult.tickEvents.map((evt, i) => ({
+        date: bundle.game.gameDate,
+        title: "Simulation System Event",
+        description: evt,
+        importance: "minor",
+        kind: "world",
+      }))
+    ]
+  };
+
+  const variables = await buildTemplateVariables(updatedBundle, { targetDate });
 
   let payload = null;
   const timeoutMs = 60000;
@@ -1282,7 +1318,7 @@ export const simulateTimelineJump = async ({ days, mode = "jump" } = {}) => {
   }
 
   if (!payload || !payload.events) {
-    payload = await fallbackJumpSimulation({ bundle, days: safeDays, mode, targetDate });
+    payload = await fallbackJumpSimulation({ bundle: updatedBundle, days: safeDays, mode, targetDate });
   }
 
   const result = {
@@ -1295,12 +1331,12 @@ export const simulateTimelineJump = async ({ days, mode = "jump" } = {}) => {
   };
 
   return applySimulationResult({
-    baseActions: bundle.actions,
-    baseChats: bundle.chats,
+    baseActions: updatedBundle.actions,
+    baseChats: updatedBundle.chats,
     baseColors,
-    baseEvents: bundle.events,
-    baseGame: bundle.game,
-    baseWorld: bundle.world,
+    baseEvents: updatedBundle.events,
+    baseGame: updatedBundle.game,
+    baseWorld: updatedBundle.world,
     result,
   });
 };

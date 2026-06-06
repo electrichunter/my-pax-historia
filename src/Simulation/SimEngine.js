@@ -28,6 +28,77 @@ export class SimEngine {
         };
     }
 
+    // The core deterministic tick loop
+    runDeterministicTick(plannedActions) {
+        const nextWorld = structuredClone(this.bundle.world);
+        const nextActions = structuredClone(plannedActions);
+        const tickEvents = [];
+        const countryCatalog = this.countryCatalog;
+        const playerCode = countryCatalog.find(c => c.name.toLowerCase() === (this.bundle.game.country || "Turkey").toLowerCase() || c.code.toLowerCase() === (this.bundle.game.country || "TR").toLowerCase())?.code || "TR";
+
+        // 1. Economy Tick (Resource Generation)
+        for (const polity of Object.values(nextWorld.polityOverrides || {})) {
+            if (!polity || !polity.code || !polity.resources) continue;
+            const res = polity.resources;
+            
+            // Generate Political Power and Economic Capital
+            res.politicalPower = Math.min(200, (res.politicalPower || 200) + 15);
+            res.economicCapital = Math.min(200, (res.economicCapital || 100) + 20);
+
+            // Stability check
+            if (res.stability < 30) {
+                tickEvents.push(`[SYSTEM_EVENT: Low Stability Crisis in ${polity.code}. Riots spread.]`);
+                res.economicCapital = Math.max(0, res.economicCapital - 10);
+            }
+        }
+
+        // 2. Player Action Deduction
+        for (const action of nextActions) {
+            if (action.status !== "planned" || action.source !== "manual") continue;
+            
+            // Calculate cost (re-implement basic cost logic here)
+            const text = (action.text || action.title || "").toLowerCase();
+            let cost = 15;
+            if (action.kind === "chat") cost = 10;
+            if (text.includes("savaş") || text.includes("attack") || text.includes("ordu") || text.includes("sınır") || text.includes("asker") || text.includes("military")) cost = 30;
+
+            const playerRes = nextWorld.polityOverrides[playerCode]?.resources;
+            if (playerRes) {
+                if (playerRes.politicalPower >= cost) {
+                    playerRes.politicalPower -= cost;
+                } else {
+                    action.status = "failed";
+                    action.failureReason = "Insufficient Political Power.";
+                    tickEvents.push(`[SYSTEM_EVENT: Player action "${action.title}" failed due to bureaucracy and lack of political capital.]`);
+                }
+            }
+        }
+
+        // 3. AI Agents (Decision Trees)
+        for (const polity of Object.values(nextWorld.polityOverrides || {})) {
+            if (!polity || !polity.code || polity.code === playerCode || !polity.resources) continue;
+            const res = polity.resources;
+            
+            // Simple Agendas based on resources
+            if (res.stability < 40 && res.politicalPower >= 20) {
+                // Focus on internal stability
+                res.politicalPower -= 20;
+                res.stability += 15;
+                tickEvents.push(`[AI_ACTION: ${polity.code} initiates domestic reforms to quell unrest.]`);
+            } else if (res.economicCapital < 50 && res.politicalPower >= 10) {
+                // Seek trade
+                res.politicalPower -= 10;
+                tickEvents.push(`[AI_ACTION: ${polity.code} aggressively seeks foreign investment and trade deals to boost its failing economy.]`);
+            } else if (res.militaryCap > 60 && res.politicalPower >= 30 && res.stability > 50) {
+                // Hostile posture
+                res.politicalPower -= 30;
+                tickEvents.push(`[AI_ACTION: ${polity.code} conducts large-scale military drills near its borders, signaling aggressive intent.]`);
+            }
+        }
+
+        return { nextWorld, nextActions, tickEvents };
+    }
+
     async processDeterministicJump(days, plannedActions, isTr) {
         const events = [];
         const currentOverrides = { ...(this.bundle.world?.regionOwnershipOverrides || {}) };
@@ -43,11 +114,11 @@ export class SimEngine {
                 description:
                   action.kind === "chat"
                     ? isTr
-                      ? `${this.bundle.game.country}, ${action.title.toLowerCase()} konusunda tarafları masaya oturmaya zorlayarak kasıtlı bir diplomatik kanal açıyor.`
-                      : `${this.bundle.game.country} opens a deliberate diplomatic channel tied to ${action.title.toLowerCase()}, forcing counterparts to weigh terms instead of guessing intent.`
+                      ? `Oyuncu diplomatik bir toplantı başlattı: "${action.title}". (Sistem Notu: LLM bağlantısı kurulamadığı için detaylı anlatım üretilemedi).`
+                      : `The player initiated a diplomatic meeting: "${action.title}". (System Note: Detailed narration unavailable due to LLM fallback).`
                     : isTr
-                      ? `${this.bundle.game.country}, ${action.title.toLowerCase()} planı için uygulamaya geçiyor; bu durum diğer güçlerin de dikkatini çeken ani idari ve siyasi sonuçlar doğuruyor.`
-                      : `${this.bundle.game.country} begins implementing ${action.title.toLowerCase()}, producing immediate administrative and political consequences that other powers start to notice.`,
+                      ? `Oyuncu emri uygulamaya kondu: "${action.title}". Bu hamlenin stratejik sonuçları hesaplanıyor.`
+                      : `Player order enacted: "${action.title}". Strategic consequences are being calculated.`,
                 impacts: {
                   createdChats:
                     action.kind === "chat" && action.invitees.length > 0 && action.chatStarter
@@ -70,11 +141,11 @@ export class SimEngine {
                 title:
                   action.kind === "chat"
                     ? isTr
-                      ? `${this.bundle.game.country} diplomatik bir kanal açıyor`
-                      : `${this.bundle.game.country} opens a diplomatic channel`
+                      ? `Diplomatik Kanal: ${action.title}`
+                      : `Diplomatic Channel: ${action.title}`
                     : isTr
-                      ? `${this.bundle.game.country}, ${action.title.toLowerCase()} hamlesini yapıyor`
-                      : `${this.bundle.game.country} acts on ${action.title.toLowerCase()}`,
+                      ? `Emir: ${action.title}`
+                      : `Order: ${action.title}`,
               });
             });
         }

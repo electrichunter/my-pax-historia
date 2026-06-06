@@ -272,7 +272,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
     const [isImproving, setIsImproving] = React.useState(false);
     const [isSuggesting, setIsSuggesting] = React.useState(false);
     const [language, setLanguage] = React.useState("English");
-    const [budgetLimit, setBudgetLimit] = React.useState(100);
+    const [ppLimit, setPpLimit] = React.useState(200);
     const inputRef = React.useRef(null);
     const loc = getLocaleStrings(language);
 
@@ -336,31 +336,9 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
             const playerCode = countryCatalog.find(c => c.name.toLowerCase() === country.toLowerCase() || c.code.toLowerCase() === country.toLowerCase())?.code;
             if (!playerCode) return;
 
-            const regionsOwned = regionCatalog.filter(region => {
-                const owner = worldState.regionOwnershipOverrides?.[region.id] || region.countryCode || "US";
-                return owner.toLowerCase() === playerCode.toLowerCase();
-            });
-
-            const pins = worldState.mapPins || [];
-            const industriesOwned = pins.filter(pin => {
-                if (pin.type !== "industry") return false;
-                const reg = regionCatalog.find(r => r.id === pin.regionId);
-                if (!reg) return false;
-                const owner = worldState.regionOwnershipOverrides?.[reg.id] || reg.countryCode || "US";
-                return owner.toLowerCase() === playerCode.toLowerCase();
-            });
-
-            readJson(JSON_URLS.game, { defaultValue: {} }).then((gameData) => {
-                const diff = gameData.difficulty || "standard";
-                let multiplier = 1.0;
-                if (diff === "easy") multiplier = 1.3;
-                else if (diff === "hard") multiplier = 0.8;
-                else if (diff === "nightmare" || diff === "kabus") multiplier = 0.5;
-
-                const rawBudget = (regionsOwned.length * 5) + (industriesOwned.length * 15);
-                const total = Math.max(50, Math.round(rawBudget * multiplier));
-                setBudgetLimit(total);
-            });
+            const playerPolity = worldState.polityOverrides?.[playerCode];
+            const pp = playerPolity?.resources?.politicalPower ?? 200;
+            setPpLimit(pp);
         }).catch(console.error);
     }, [isOpen, country, actions]);
 
@@ -391,6 +369,11 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
     const handleSubmit = async () => {
         const trimmed = inputValue.trim();
         if (!trimmed || isSubmitting || isImproving) {
+            return;
+        }
+        const costPreview = calculateActionCost({ text: trimmed });
+        if (budgetUsed + costPreview > ppLimit) {
+            // Cannot submit if it exceeds political power
             return;
         }
 
@@ -511,17 +494,17 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
             <span style={{ fontSize: "1rem", fontWeight: 700, letterSpacing: "0.01em" }}>{loc.actionsTitle}</span>
             <div
             style={{
-                backgroundColor: budgetUsed > budgetLimit ? "rgba(239, 68, 68, 0.2)" : "rgba(16, 185, 129, 0.15)",
-                border: budgetUsed > budgetLimit ? "1px solid rgba(239, 68, 68, 0.5)" : "1px solid rgba(16, 185, 129, 0.4)",
+                backgroundColor: budgetUsed > ppLimit ? "rgba(239, 68, 68, 0.2)" : "rgba(16, 185, 129, 0.15)",
+                border: budgetUsed > ppLimit ? "1px solid rgba(239, 68, 68, 0.5)" : "1px solid rgba(16, 185, 129, 0.4)",
                 borderRadius: "12px",
-                color: budgetUsed > budgetLimit ? "#f87171" : "#34d399",
+                color: budgetUsed > ppLimit ? "#f87171" : "#34d399",
                 fontSize: "0.74rem",
                 fontWeight: "bold",
                 padding: "0.22rem 0.65rem",
                 transition: "all 0.2s ease",
             }}
             >
-            💰 {loc.budgetLabel}: {budgetUsed}/{budgetLimit}
+            ⚡ Political Power: {budgetUsed}/{ppLimit}
             </div>
         </div>
         <button
@@ -752,10 +735,10 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
             <button
             type="button"
             onClick={handleSubmit}
-            disabled={!inputValue.trim() || isSubmitting || isImproving}
+            disabled={!inputValue.trim() || isSubmitting || isImproving || (budgetUsed + calculateActionCost({ text: inputValue })) > ppLimit}
             style={{
                 alignItems: "center",
-                background: inputValue.trim() && !isSubmitting && !isImproving ? "#3b82f6" : "rgba(59,130,246,0.3)",
+                background: (inputValue.trim() && !isSubmitting && !isImproving && (budgetUsed + calculateActionCost({ text: inputValue })) <= ppLimit) ? "#3b82f6" : "rgba(59,130,246,0.3)",
                 border: "none",
                 borderRadius: "10px",
                 color: "white",
@@ -768,12 +751,12 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
                 width: "2.2rem",
             }}
             onMouseEnter={(event) => {
-                if (inputValue.trim() && !isSubmitting && !isImproving) {
+                if (inputValue.trim() && !isSubmitting && !isImproving && (budgetUsed + calculateActionCost({ text: inputValue })) <= ppLimit) {
                     event.currentTarget.style.background = "#2563eb";
                 }
             }}
             onMouseLeave={(event) => {
-                if (inputValue.trim() && !isSubmitting && !isImproving) {
+                if (inputValue.trim() && !isSubmitting && !isImproving && (budgetUsed + calculateActionCost({ text: inputValue })) <= ppLimit) {
                     event.currentTarget.style.background = "#3b82f6";
                 }
             }}
